@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+{% block title %}Refresh and try again · Shop Coin{% endblock %}
+{% block content %}
+<div class="container app-shell py-5">
+  <section class="panel-card text-center py-5">
+    <span class="feature-icon mx-auto"><i class="fa-solid fa-shield-halved"></i></span>
+    <h1 class="h3 mt-3">Please refresh and try again</h1>
+    <p class="text-muted">This form could not be verified. Reload the page, then submit it again.</p>
+    <a class="btn btn-brand" href="{{ request.path }}">Reload page</a>
+  </section>
+</div>
+{% endblock %}

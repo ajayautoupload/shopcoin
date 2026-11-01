@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+{% block title %}Add Customer · {{ shop.name }}{% endblock %}
+{% block content %}
+<div class="container app-shell py-4">
+  <header class="page-heading"><span class="eyebrow">{{ shop.name }}</span><h1>Add Customer</h1><p>Create a customer login connected to your approved shop.</p></header>
+  <section class="form-panel mt-3"><form method="post" enctype="multipart/form-data" novalidate>{% csrf_token %}
+    {% for error in form.non_field_errors %}<div class="alert alert-danger">{{ error }}</div>{% endfor %}
+    {% for field in form %}<div class="mb-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} <span class="text-danger">*</span>{% endif %}</label>{{ field }}{% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}{% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>{% endfor %}
+    <div class="d-grid gap-2 d-sm-flex"><button class="btn btn-brand btn-lg" type="submit">Create Customer</button><a class="btn btn-outline-secondary btn-lg" href="{% url 'shops:customers' %}">Cancel</a></div>
+  </form></section>
+</div>
+{% endblock %}

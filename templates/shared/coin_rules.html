@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+{% block title %}Coin Rules · Shop Coin{% endblock %}
+{% block content %}
+<div class="container app-shell py-4">
+  <header class="page-heading"><span class="eyebrow">🪙 Shop Coin rewards</span><h1>Coin Rules</h1><p>{% if shop %}Rules for {{ shop.name }}{% else %}How Shop Coin rewards work{% endif %}</p></header>
+  <section class="content-section"><div class="rules-card"><h2 class="h5">Coin earning slabs</h2>
+    {% if rules %}<div class="table-responsive"><table class="table align-middle"><thead><tr><th>Current coin balance</th><th>Coin value</th></tr></thead><tbody>{% for slab in rule_slabs %}<tr><td>{{ slab.range }}</td><td>₹{{ slab.rule.coin_value_per_coin|floatformat:2 }} per coin</td></tr>{% endfor %}</tbody></table></div>
+    {% else %}<p class="mb-0">{% if shop %}No active Coin Rule configured for this shop. Ask the administrator to configure the slabs.{% else %}Your shopkeeper will configure earning rules for your shop.{% endif %}</p>{% endif %}
+    <p class="small text-muted mb-0">Each ₹100 of final bill value after discount earns 1 coin. Fractional coins are rounded down. Your current balance determines the value of every active coin.</p>
+  </div></section>
+  <section class="content-section"><div class="rules-card"><h2 class="h5">Coin reward value</h2><p class="mb-0">Your active coin balance is valued as one total: current coins × the per-coin value for your balance slab. A bill keeps its issue-time value in its history.</p></div></section>
+</div>
+{% endblock %}
+

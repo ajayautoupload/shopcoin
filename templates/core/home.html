@@ -1,0 +1,62 @@
+{% extends 'base.html' %}
+{% block title %}Shop Coin — Earn Coins. Save More.{% endblock %}
+{% block content %}
+<section class="landing-hero">
+  <div class="container landing-hero-grid">
+    <div class="landing-copy">
+      <span class="eyebrow"><i class="fa-solid fa-sparkles me-2"></i>A smarter way to shop</span>
+      <h1>Earn Coins.<br><span>Save More.</span></h1>
+      <p class="landing-subheading">Shop from local businesses, earn Shop Coins, and enjoy rewards on your purchases.</p>
+      <p class="landing-description">Shop Coin connects customers with local shops through a simple rewards system that makes everyday shopping more rewarding.</p>
+      <div class="landing-actions">
+        <a class="btn btn-brand btn-lg" href="{% url 'accounts:login' %}"><i class="fa-solid fa-store me-2"></i>Shopkeeper Login</a>
+        <a class="btn btn-outline-brand btn-lg" href="{% url 'customers:login' %}"><i class="fa-regular fa-user me-2"></i>Customer Login</a>
+      </div>
+      <div class="landing-trust"><i class="fa-solid fa-shield-halved"></i> Simple rewards. Clear rules. Everyday value.</div>
+    </div>
+    <div class="landing-visual" aria-label="Shop Coin rewards illustration">
+      <div class="landing-orbit landing-orbit-outer"></div>
+      <div class="landing-orbit landing-orbit-inner"></div>
+      <div class="landing-coin-stack"><i class="fa-solid fa-coins"></i><span>SHOP<br>COIN</span></div>
+      <div class="landing-float landing-float-top"><span class="landing-float-icon"><i class="fa-solid fa-plus"></i></span><span><small>Everyday</small><strong>Earn Coins</strong></span></div>
+      <div class="landing-float landing-float-bottom"><span class="landing-float-icon landing-float-icon-gold"><i class="fa-solid fa-gift"></i></span><span><small>Rewards that add up</small><strong>Save More</strong></span></div>
+      <span class="landing-spark landing-spark-one">✳</span><span class="landing-spark landing-spark-two">✦</span>
+    </div>
+  </div>
+</section>
+
+<section class="landing-benefits section-pad">
+  <div class="container">
+    <div class="section-heading"><span class="eyebrow">More from every purchase</span><h2>Everyday shopping, with extra value.</h2><p>One simple rewards idea that works for customers and local businesses.</p></div>
+    <div class="row g-3 mt-3">
+      <div class="col-sm-6 col-lg-3"><article class="landing-benefit-card"><span class="landing-benefit-icon"><i class="fa-solid fa-coins"></i></span><h3>Earn Coins</h3><p>Earn Shop Coins on every eligible purchase.</p></article></div>
+      <div class="col-sm-6 col-lg-3"><article class="landing-benefit-card"><span class="landing-benefit-icon benefit-gold"><i class="fa-solid fa-piggy-bank"></i></span><h3>Save More</h3><p>Put earned coins toward future purchases and rewards.</p></article></div>
+      <div class="col-sm-6 col-lg-3"><article class="landing-benefit-card"><span class="landing-benefit-icon benefit-blue"><i class="fa-solid fa-shop"></i></span><h3>Local Shopping</h3><p>Make shopping with local businesses more rewarding.</p></article></div>
+      <div class="col-sm-6 col-lg-3"><article class="landing-benefit-card"><span class="landing-benefit-icon benefit-rose"><i class="fa-solid fa-gift"></i></span><h3>Enjoy Rewards</h3><p>Get more from shopping with additional rewards and benefits.</p></article></div>
+    </div>
+  </div>
+</section>
+
+<section class="landing-how section-pad">
+  <div class="container">
+    <div class="section-heading"><span class="eyebrow">Three simple steps</span><h2>How Shop Coin works</h2></div>
+    <div class="landing-steps">
+      <article class="landing-step"><span class="landing-step-number">01</span><span class="landing-step-icon"><i class="fa-solid fa-bag-shopping"></i></span><h3>Shop</h3><p>Make a purchase at a participating local business.</p></article>
+      <span class="landing-step-connector" aria-hidden="true"><i class="fa-solid fa-arrow-right"></i></span>
+      <article class="landing-step"><span class="landing-step-number">02</span><span class="landing-step-icon"><i class="fa-solid fa-coins"></i></span><h3>Earn</h3><p>Receive Shop Coins on purchases that meet the shop’s rules.</p></article>
+      <span class="landing-step-connector" aria-hidden="true"><i class="fa-solid fa-arrow-right"></i></span>
+      <article class="landing-step"><span class="landing-step-number">03</span><span class="landing-step-icon"><i class="fa-solid fa-gift"></i></span><h3>Redeem</h3><p>Use eligible coins according to the shop’s available rules.</p></article>
+    </div>
+  </div>
+</section>
+
+<section class="landing-rules-wrap section-pad">
+  <div class="container">
+    <article class="landing-rules-card">
+      <div class="landing-rules-mark"><i class="fa-solid fa-coins"></i></div>
+      <div><span class="eyebrow">How Shop Coins work</span><h2>Rewards with clear rules.</h2><p>Coin earning, value and redemption terms can vary by participating shop. Check the shop’s Coin Rules for eligible purchases, coin value and how to use your balance.</p></div>
+      <span class="landing-rules-decoration" aria-hidden="true"><i class="fa-solid fa-circle-check"></i></span>
+    </article>
+  </div>
+</section>
+{% endblock %}

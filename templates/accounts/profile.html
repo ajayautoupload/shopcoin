@@ -1,0 +1,7 @@
+{% extends 'base.html' %}
+{% block title %}Edit profile · Shop Coin{% endblock %}
+{% block content %}
+<div class="container app-shell py-4"><div class="form-panel profile-edit-panel"><a class="back-link" href="{% url 'customers:profile' %}"><i class="fa-solid fa-arrow-left"></i> Profile</a><span class="eyebrow d-block mt-4">Account settings</span><h1 class="h3 mt-2">Edit profile</h1><p class="text-muted">Update your contact details and preferences.</p>
+  <form method="post" enctype="multipart/form-data" novalidate>{% csrf_token %}{% for field in form %}<div class="mb-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}{% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>{% endfor %}{% for error in form.non_field_errors %}<div class="alert alert-danger">{{ error }}</div>{% endfor %}<button type="submit" class="btn btn-brand btn-lg w-100">Save changes</button></form>
+</div></div>
+{% endblock %}

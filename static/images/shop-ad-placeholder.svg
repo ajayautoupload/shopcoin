@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 500" role="img" aria-label="Shop promotion banner placeholder">
+  <defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#e5f2ea"/><stop offset="1" stop-color="#c6dfd1"/></linearGradient></defs>
+  <rect width="1200" height="500" fill="url(#g)"/>
+  <circle cx="980" cy="250" r="155" fill="#ffffff" opacity=".55"/><circle cx="1025" cy="205" r="80" fill="#f5d57c" opacity=".8"/>
+  <path d="M930 210h170l-18 185H950z" fill="#4d8c72"/><path d="M910 210l24-70h160l26 70z" fill="#176c53"/>
+  <text x="70" y="220" font-family="sans-serif" font-size="42" font-weight="700" fill="#176c53">A little something special</text><text x="70" y="282" font-family="sans-serif" font-size="24" fill="#527265">Your shop promotion appears here</text>
+</svg>

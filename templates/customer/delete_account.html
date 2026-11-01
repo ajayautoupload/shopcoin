@@ -1,0 +1,11 @@
+{% extends 'base.html' %}
+{% block title %}Delete Account · Shop Coin{% endblock %}
+{% block content %}
+<div class="container app-shell py-4"><section class="form-panel mx-auto" style="max-width:640px">
+  <span class="eyebrow text-danger">Account deletion</span><h1 class="h2 mt-2">Delete Account?</h1>
+  <p>Deleting your account will:</p><ul><li>deactivate your account</li><li>reset your coin balance to 0 while preserving its ledger history</li><li>remove your active login access</li><li>release your mobile number for future registration</li></ul>
+  <p class="fw-semibold">This action cannot be undone.</p>
+  {% if confirmation_error %}<div class="alert alert-danger">{{ confirmation_error }}</div>{% endif %}
+  <form method="post">{% csrf_token %}<div class="form-check mb-4"><input class="form-check-input" type="checkbox" name="confirm_delete" value="yes" id="confirm-delete" required><label class="form-check-label" for="confirm-delete">I understand and want to delete my account.</label></div><div class="d-grid gap-2 d-sm-flex"><a class="btn btn-outline-secondary btn-lg" href="{% url 'customers:profile' %}">Cancel</a><button class="btn btn-danger btn-lg" type="submit">Delete Account</button></div></form>
+</section></div>
+{% endblock %}

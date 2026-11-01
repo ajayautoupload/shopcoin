@@ -1,0 +1,30 @@
+from django.urls import path
+from . import views
+
+app_name = 'shops'
+urlpatterns = [
+    path('shopkeeper/', views.dashboard, name='dashboard'),
+    path('shopkeeper/products/', views.my_products, name='products'),
+    path('shopkeeper/products/add/', views.product_create, name='product_create'),
+    path('shopkeeper/products/<int:pk>/edit/', views.product_edit, name='product_edit'),
+    path('shopkeeper/products/<int:pk>/delete/', views.product_delete, name='product_delete'),
+    path('shopkeeper/ads/', views.my_ads, name='ads'),
+    path('shopkeeper/ads/add/', views.ad_create, name='ad_create'),
+    path('shopkeeper/ads/<int:pk>/edit/', views.ad_edit, name='ad_edit'),
+    path('shopkeeper/ads/<int:pk>/delete/', views.ad_delete, name='ad_delete'),
+    path('shopkeeper/ads/<int:pk>/toggle/', views.ad_toggle, name='ad_toggle'),
+    path('shopkeeper/shop/create/', views.shop_form, name='shop_create'),
+    path('shopkeeper/shop/<slug:slug>/', views.shop_detail, name='shop_detail'),
+    path('shopkeeper/sales/', views.sales, name='sales'),
+    path('shopkeeper/customers/', views.customers, name='customers'),
+    path('shopkeeper/coin-rules/', views.coin_rules, name='coin_rules'),
+    path('shopkeeper/customers/add/', views.customer_create, name='customer_create'),
+    path('shopkeeper/coins/', views.placeholder, {'title': 'Coins'}, name='coins'),
+    path('shopkeeper/profile/', views.profile, name='profile'),
+    path('shopkeeper/notifications/', views.placeholder, {'title': 'Notifications'}, name='notifications'),
+    path('shopkeeper/bills/', views.bills, name='bills'),
+    path('shopkeeper/bills/<int:customer_id>/create/', views.create_bill_for_customer, name='create_bill_for_customer'),
+    path('shopkeeper/bills/<int:bill_id>/', views.bill_detail, name='bill_detail'),
+    path('shopkeeper/customers/<int:customer_id>/', views.customer_detail, name='customer_detail'),
+    path('shopkeeper/customers/<int:customer_id>/clear-coins/', views.clear_customer_coins, name='clear_customer_coins'),
+]

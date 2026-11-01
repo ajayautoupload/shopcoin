@@ -1,0 +1,56 @@
+{% load static %}
+<nav class="navbar navbar-expand-lg bg-white border-bottom sticky-top">
+  <div class="container">
+    {% if request.path == '/login/' or request.path == '/customer/login/' %}
+      <a class="navbar-brand fw-bold text-brand" href="{% url 'core:home' %}"><span class="brand-mark"><i class="fa-solid fa-coins"></i></span> Shop Coin</a>
+    {% elif request.resolver_match.url_name == 'home' %}
+      <a class="navbar-brand fw-bold text-brand" href="{% url 'core:home' %}"><span class="brand-mark"><i class="fa-solid fa-coins"></i></span> Shop Coin</a>
+      <div class="d-flex align-items-center gap-2 landing-nav-actions">
+        <a class="nav-link fw-semibold" href="{% url 'accounts:login' %}">Shopkeeper Login</a>
+        <a class="btn btn-brand btn-sm" href="{% url 'customers:login' %}">Customer Login</a>
+      </div>
+    {% elif user.is_authenticated and not user.is_superuser and user.profile.role == 'CUSTOMER' %}
+      <a class="navbar-brand fw-bold text-brand shop-header-name" href="{% url 'customers:dashboard' %}" style="display:inline-flex;align-items:center;gap:.5rem;max-width:45vw;white-space:nowrap;overflow:hidden;vertical-align:middle">
+        {% if user.customer_profile.connected_shop.logo %}<img class="brand-shop-logo" width="40" height="40" style="display:block;width:40px;height:40px;max-width:40px;object-fit:cover;flex:0 0 40px;border-radius:10px" src="{{ user.customer_profile.connected_shop.logo.url }}" alt="{{ user.customer_profile.connected_shop.name }} logo">{% else %}<span class="brand-mark"><i class="fa-solid fa-coins"></i></span>{% endif %}
+        <span style="overflow:hidden;text-overflow:ellipsis">{% if user.customer_profile.connected_shop %}{{ user.customer_profile.connected_shop.name }}{% else %}Shop Coin{% endif %}</span>
+      </a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#customerNav" aria-label="Toggle navigation"><span class="navbar-toggler-icon"></span></button>
+      <div class="collapse navbar-collapse" id="customerNav"><div class="navbar-nav ms-auto align-items-lg-center gap-lg-2">
+        <a class="desktop-nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" href="{% url 'customers:dashboard' %}">Home</a>
+        <a class="desktop-nav-link {% if request.resolver_match.url_name == 'shop' or request.resolver_match.url_name == 'product_detail' %}active{% endif %}" href="{% url 'customers:shop' %}">Shop</a>
+        <a class="desktop-nav-link {% if request.resolver_match.url_name == 'wallet' %}active{% endif %}" href="{% url 'customers:wallet' %}">Wallet</a>
+        <a class="desktop-nav-link {% if request.resolver_match.url_name == 'coin_rules' %}active{% endif %}" href="{% url 'customers:coin_rules' %}">Coin Rules</a>
+        <a class="desktop-nav-link" href="{% url 'customers:profile' %}">Profile</a>
+        <form method="post" action="{% url 'accounts:logout' %}" class="d-inline">{% csrf_token %}<button class="btn btn-outline-brand btn-sm" type="submit">Log out</button></form>
+      </div></div>
+    {% elif user.is_authenticated and not user.is_superuser and user.profile.role == 'SHOPKEEPER' %}
+      {% with shop=user.shops.first %}
+        <a class="navbar-brand fw-bold text-brand shop-header-name" href="{% url 'shops:dashboard' %}" style="display:inline-flex;align-items:center;gap:.5rem;max-width:45vw;white-space:nowrap;overflow:hidden;vertical-align:middle">
+          {% if shop.logo %}<img class="brand-shop-logo" width="40" height="40" style="display:block;width:40px;height:40px;max-width:40px;object-fit:cover;flex:0 0 40px;border-radius:10px" src="{{ shop.logo.url }}" alt="{{ shop.name }} logo">{% else %}<span class="brand-mark"><i class="fa-solid fa-coins"></i></span>{% endif %}
+          <span style="overflow:hidden;text-overflow:ellipsis">{% if shop %}{{ shop.name }}{% else %}Shop Coin{% endif %}</span>
+        </a>
+      {% endwith %}
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#shopkeeperNav" aria-label="Toggle navigation"><span class="navbar-toggler-icon"></span></button>
+      <div class="collapse navbar-collapse" id="shopkeeperNav"><div class="navbar-nav ms-auto align-items-lg-center gap-lg-2">
+        <a class="desktop-nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" href="{% url 'shops:dashboard' %}">Dashboard</a>
+        <a class="desktop-nav-link {% if request.resolver_match.url_name == 'products' or request.resolver_match.url_name == 'product_create' or request.resolver_match.url_name == 'product_edit' %}active{% endif %}" href="{% url 'shops:products' %}">Products</a>
+        <a class="desktop-nav-link {% if request.resolver_match.url_name == 'customers' or request.resolver_match.url_name == 'customer_create' %}active{% endif %}" href="{% url 'shops:customers' %}">Customers</a>
+        <a class="desktop-nav-link {% if request.resolver_match.url_name == 'sales' %}active{% endif %}" href="{% url 'shops:sales' %}">Orders</a>
+        <a class="desktop-nav-link {% if request.resolver_match.url_name == 'coin_rules' %}active{% endif %}" href="{% url 'shops:coin_rules' %}">Coin Rules</a>
+        <a class="desktop-nav-link" href="{% url 'shops:profile' %}">Profile</a>
+        <form method="post" action="{% url 'accounts:logout' %}" class="d-inline">{% csrf_token %}<button class="btn btn-outline-brand btn-sm" type="submit">Log out</button></form>
+      </div></div>
+    {% else %}
+      <a class="navbar-brand fw-bold text-brand" href="{% url 'core:home' %}"><span class="brand-mark"><i class="fa-solid fa-coins"></i></span> Shop Coin</a>
+      {% if user.is_authenticated %}
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNav" aria-label="Toggle navigation"><span class="navbar-toggler-icon"></span></button>
+        <div class="collapse navbar-collapse" id="mainNav"><div class="navbar-nav ms-auto align-items-lg-center gap-lg-2">
+          {% if user.is_superuser %}<a class="nav-link" href="/admin/">Admin</a>{% endif %}
+          <form method="post" action="{% url 'accounts:logout' %}" class="d-inline">{% csrf_token %}<button class="btn btn-outline-brand btn-sm" type="submit">Sign out</button></form>
+        </div></div>
+      {% else %}
+        <div class="d-flex align-items-center gap-2"><a class="nav-link" href="{% url 'customers:login' %}">Customer login</a><a class="btn btn-brand btn-sm" href="{% url 'accounts:register_shopkeeper' %}">Register your shop</a></div>
+      {% endif %}
+    {% endif %}
+  </div>
+</nav>

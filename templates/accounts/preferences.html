@@ -1,0 +1,7 @@
+{% extends 'base.html' %}
+{% block title %}{{ settings_title }} · Shop Coin{% endblock %}
+{% block content %}
+<div class="container app-shell py-4"><div class="form-panel"><a class="back-link" href="{% url 'customers:profile' %}"><i class="fa-solid fa-arrow-left"></i> Profile</a><span class="eyebrow d-block mt-4">Your preferences</span><h1 class="h3 mt-2">{{ settings_title }}</h1><p class="text-muted">{{ settings_description }}</p>
+  <form method="post" class="mt-4">{% csrf_token %}{% for field in form %}<div class="preference-row"><div><label for="{{ field.id_for_label }}">{{ field.label }}</label>{% if field.help_text %}<p>{{ field.help_text }}</p>{% endif %}</div>{{ field }}</div>{% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}{% endfor %}<button class="btn btn-brand btn-lg w-100 mt-4" type="submit">Save preferences</button></form>
+</div></div>
+{% endblock %}
