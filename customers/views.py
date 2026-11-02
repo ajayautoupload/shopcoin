@@ -1,4 +1,6 @@
 from django.contrib import messages
+from django.http import JsonResponse
+from django.views.decorators.http import require_POST
 from django.contrib.auth import views as auth_views
 from django.contrib.auth import logout
 from django.core.exceptions import ValidationError
@@ -12,8 +14,8 @@ from accounts.forms import CustomerProfileForm, NotificationSettingsForm, Privac
 from offers.models import ShopAd
 from shops.models import Product, Shop
 from accounts.services import deactivate_customer_account
-from wallet.models import CoinRedemption, CoinRule
-from wallet.services import get_customer_coin_summary
+from wallet.models import CoinRedemption, CoinRule, WebsiteEngagement
+from wallet.services import begin_website_engagement, get_customer_coin_summary, record_website_engagement_heartbeat
 from django.db.models import Count, Sum
 from django.db.models.functions import Coalesce
 from decimal import Decimal
@@ -38,16 +40,44 @@ def dashboard(request):
     coin_summary = get_customer_coin_summary(profile, shop)
     wallet = coin_summary['wallet']
     recent_bills = Bill.objects.filter(customer=profile).select_related('shop').prefetch_related('items')[:5]
-    historical = Bill.objects.filter(customer=profile).aggregate(total_bills=Count('pk'), total_coins_earned=Coalesce(Sum('coins_earned'), 0))
+    historical = Bill.objects.filter(customer=profile, status=Bill.Status.COMPLETED).aggregate(total_bills=Count('pk'), total_coins_earned=Coalesce(Sum('coins_earned'), 0))
     summary = {**coin_summary, **historical, 'total_spent': coin_summary['total_shopping'], 'total_coins': coin_summary['active_coins']}
-    return render(request, 'customer/dashboard.html', {'profile': profile, 'shop': shop, 'products': products, 'offers': offers, 'ads': ads, 'wallet': wallet, 'current_worth': summary['current_reward_value'], 'recent_bills': recent_bills, 'summary': summary, 'coin_worth': summary['current_reward_value']})
+    today_engagement = WebsiteEngagement.objects.filter(customer=profile, visit_date=timezone.localdate()).first()
+    return render(request, 'customer/dashboard.html', {'profile': profile, 'shop': shop, 'products': products, 'offers': offers, 'ads': ads, 'wallet': wallet, 'current_worth': summary['current_reward_value'], 'recent_bills': recent_bills, 'summary': summary, 'coin_worth': summary['current_reward_value'], 'today_engagement': today_engagement})
+
+
+@customer_required
+@require_POST
+def website_engagement_start(request):
+    profile = request.user.customer_profile
+    engagement = begin_website_engagement(customer=profile)
+    if engagement is None:
+        return JsonResponse({'eligible': False}, status=400)
+    return JsonResponse({
+        'eligible': True,
+        'session_token': str(engagement.session_token),
+        'active_seconds': engagement.active_seconds,
+        'complete': bool(engagement.rewarded_at),
+    })
+
+
+@customer_required
+@require_POST
+def website_engagement_heartbeat(request):
+    result = record_website_engagement_heartbeat(
+        customer=request.user.customer_profile,
+        session_token=request.POST.get('session_token'),
+    )
+    if result.get('reason'):
+        return JsonResponse(result, status=400)
+    return JsonResponse(result)
 
 
 @customer_required
 def shopping_history(request):
     profile = request.user.customer_profile
     bills = Bill.objects.filter(customer=profile).select_related('shop').prefetch_related('items')
-    summary = bills.aggregate(total_spent=Coalesce(Sum('total_amount'), Decimal('0.00')), total_bills=Count('pk'), total_coins=Coalesce(Sum('coins_earned'), 0), reward_value=Coalesce(Sum('coin_value_amount'), Decimal('0.00')))
+    summary = bills.filter(status=Bill.Status.COMPLETED).aggregate(total_spent=Coalesce(Sum('total_amount'), Decimal('0.00')), total_bills=Count('pk', distinct=True), total_coins=Coalesce(Sum('coins_earned'), 0), reward_value=Coalesce(Sum('coin_value_amount'), Decimal('0.00')))
     coin_summary = get_customer_coin_summary(profile)
     summary.update(active_coins=coin_summary['active_coins'], current_reward_value=coin_summary['current_reward_value'])
     redemptions = CoinRedemption.objects.filter(customer=profile).select_related('shop').order_by('-redeemed_at')
@@ -74,7 +104,7 @@ def wallet(request):
     profile = request.user.customer_profile
     coin_summary = get_customer_coin_summary(profile)
     wallet = coin_summary['wallet']
-    rules = CoinRule.objects.filter(shop=profile.connected_shop, is_active=True, coin_balance_threshold__in=(0, 100, 500)) if profile.connected_shop else CoinRule.objects.none()
+    rules = CoinRule.objects.filter(shop=profile.connected_shop, is_active=True, purchase_amount__in=(Decimal('1000.00'), Decimal('5000.00'), Decimal('10000.00'))) if profile.connected_shop else CoinRule.objects.none()
     redemptions = CoinRedemption.objects.filter(customer=profile).select_related('shop').order_by('-redeemed_at')
     return render(request, 'customer/wallet.html', {
         'profile': profile, 'shop': profile.connected_shop, 'wallet': wallet,
@@ -106,9 +136,9 @@ def shop(request):
 def coin_rules(request):
     profile = request.user.customer_profile
     shop = profile.connected_shop
-    rules = CoinRule.objects.filter(shop=shop, is_active=True, coin_balance_threshold__in=(0, 100, 500)) if shop else CoinRule.objects.none()
-    ranges = {0: '0–99 coins', 100: '100–499 coins', 500: '500+ coins'}
-    rule_slabs = [{'rule': rule, 'range': ranges[rule.coin_balance_threshold]} for rule in rules if rule.coin_balance_threshold in ranges]
+    rules = CoinRule.objects.filter(shop=shop, is_active=True, purchase_amount__in=(Decimal('1000.00'), Decimal('5000.00'), Decimal('10000.00'))) if shop else CoinRule.objects.none()
+    ranges = {Decimal('1000.00'): '₹1,000–₹4,999', Decimal('5000.00'): '₹5,000–₹9,999', Decimal('10000.00'): '₹10,000+'}
+    rule_slabs = [{'rule': rule, 'range': ranges[rule.purchase_amount]} for rule in rules if rule.purchase_amount in ranges]
     return render(request, 'shared/coin_rules.html', {
         'shop': shop, 'rules': rules,
         'rule_slabs': rule_slabs,

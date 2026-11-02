@@ -3,12 +3,13 @@
 {% block content %}
 <div class="container app-shell py-4">
   <header class="page-heading"><span class="eyebrow">🪙 Shop Coin rewards</span><h1>Coin Rules</h1><p>{% if shop %}Rules for {{ shop.name }}{% else %}How Shop Coin rewards work{% endif %}</p></header>
-  <section class="content-section"><div class="rules-card"><h2 class="h5">Coin earning slabs</h2>
-    {% if rules %}<div class="table-responsive"><table class="table align-middle"><thead><tr><th>Current coin balance</th><th>Coin value</th></tr></thead><tbody>{% for slab in rule_slabs %}<tr><td>{{ slab.range }}</td><td>₹{{ slab.rule.coin_value_per_coin|floatformat:2 }} per coin</td></tr>{% endfor %}</tbody></table></div>
+  <section class="content-section"><div class="rules-card"><h2 class="h5">Purchase Coins</h2>
+    {% if rules %}<div class="table-responsive"><table class="table align-middle"><thead><tr><th>Bill total after discount</th><th>Purchase Coin value</th></tr></thead><tbody>{% for slab in rule_slabs %}<tr><td>{{ slab.range }}</td><td>₹{{ slab.rule.coin_value_per_coin|floatformat:2 }} per coin</td></tr>{% endfor %}</tbody></table></div>
     {% else %}<p class="mb-0">{% if shop %}No active Coin Rule configured for this shop. Ask the administrator to configure the slabs.{% else %}Your shopkeeper will configure earning rules for your shop.{% endif %}</p>{% endif %}
-    <p class="small text-muted mb-0">Each ₹100 of final bill value after discount earns 1 coin. Fractional coins are rounded down. Your current balance determines the value of every active coin.</p>
+    <p class="small text-muted mb-0">Bills below ₹1,000 earn no purchase coins. On an eligible bill, each complete ₹100 earns 1 purchase coin. Coin value is saved when each purchase coin is earned.</p>
   </div></section>
-  <section class="content-section"><div class="rules-card"><h2 class="h5">Coin reward value</h2><p class="mb-0">Your active coin balance is valued as one total: current coins × the per-coin value for your balance slab. A bill keeps its issue-time value in its history.</p></div></section>
+  <section class="content-section"><div class="rules-card"><h2 class="h5">Website Coins</h2><p>Stay signed in with this shop’s website active for more than 2 minutes to earn at most 1 Website Coin per day. Each Website Coin is worth ₹5. Refreshes and extra tabs cannot award more than one daily coin.</p><p class="mb-0"><strong>Website Coin reward eligibility:</strong> 100 Website Coins (₹500 total value), or at least 3 purchase bills above ₹1,000 each. Website Coins stay in your wallet until they are eligible and are never removed when a streak resets.</p></div></section>
+  <section class="content-section"><div class="rules-card"><h2 class="h5">Wallet and redemption</h2><p>Your wallet combines Purchase Coins and Website Coins and shows their separate counts and values. Coins are not cash and cannot be converted to cash. Eligible rewards are provided by your connected shop.</p><p class="mb-0">Website activity has its own streak. Missing two consecutive days resets the streak only; already earned coins remain in your wallet.</p></div></section>
 </div>
 {% endblock %}
 

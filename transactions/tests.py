@@ -9,7 +9,7 @@ from django.urls import reverse
 from accounts.models import CustomerProfile, ShopkeeperProfile, UserProfile
 from shops.models import Product, Shop
 from transactions.models import Bill
-from transactions.services import create_bill
+from transactions.services import create_bill, set_bill_status
 from wallet.models import CoinLedger, CoinRedemption, CoinRule, CoinValue, Wallet
 from wallet.services import get_customer_coin_summary, get_coin_rule_for_balance
 
@@ -26,12 +26,18 @@ class BillFlowTests(TestCase):
         UserProfile.objects.create(user=self.customer_user, role=UserProfile.Role.CUSTOMER)
         self.customer = CustomerProfile.objects.create(user=self.customer_user, connected_shop=self.shop, phone='9876500002')
         self.wallet = Wallet.objects.create(customer=self.customer, balance=10)
+        CoinLedger.objects.create(wallet=self.wallet, shop=self.shop, entry_type=CoinLedger.EntryType.ADJUSTMENT, coin_delta=10, coin_value_per_coin=10, balance_before=0, balance_after=10, description='Fixture starting balance')
         self.rule = CoinRule.objects.get(shop=self.shop, purchase_amount='1000.00')
         CoinValue.objects.create(shop=self.shop, value_per_coin='2.00')
         self.product = Product.objects.create(shop=self.shop, name='Shirt', price='80.00', stock=1000)
 
     def create(self, key=None, price='1800.00', discount='0.00'):
         return create_bill(shopkeeper=self.owner, shop=self.shop, customer_id=self.customer.pk, idempotency_key=key or uuid4(), discount=discount, items=[{'product': self.product, 'product_name': 'Shirt', 'quantity': 1, 'unit_price': price}])
+
+    def reset_wallet(self):
+        CoinLedger.objects.filter(wallet=self.wallet).update(is_reversed=True)
+        self.wallet.balance = 0
+        self.wallet.save(update_fields=('balance',))
 
     def test_bill_earns_coins_and_updates_wallet_and_ledger(self):
         bill, created = self.create()
@@ -40,7 +46,7 @@ class BillFlowTests(TestCase):
         self.assertEqual((bill.total_amount, bill.coins_earned), (Decimal('1800.00'), 18))
         self.assertEqual((bill.coin_value_per_coin, bill.coin_value_amount), (Decimal('10.00'), Decimal('180.00')))
         self.assertEqual((self.wallet.balance, bill.wallet_balance_before, bill.wallet_balance_after), (28, 10, 28))
-        self.assertEqual(CoinLedger.objects.filter(wallet=self.wallet).count(), 1)
+        self.assertEqual(CoinLedger.objects.filter(wallet=self.wallet).count(), 2)
         self.assertEqual(bill.items.count(), 1)
 
     def test_idempotent_repeat_does_not_credit_wallet_twice(self):
@@ -73,9 +79,8 @@ class BillFlowTests(TestCase):
         self.assertEqual(bill.coin_value_per_coin, Decimal('10.00'))
 
     def test_bill_coin_earning_boundaries_and_zero_bill(self):
-        self.wallet.balance = 0
-        self.wallet.save(update_fields=('balance',))
-        for amount, expected_coins in (('0', 0), ('99', 0), ('100', 1), ('999', 9), ('1000', 10), ('4999', 49), ('5000', 50), ('9999', 99), ('10000', 100)):
+        self.reset_wallet()
+        for amount, expected_coins in (('0', 0), ('99', 0), ('100', 0), ('999', 0), ('1000', 10), ('4999', 49), ('5000', 50), ('9999', 99), ('10000', 100)):
             with self.subTest(amount=amount):
                 bill, _ = self.create(price=amount)
                 self.assertEqual(bill.total_amount, Decimal(amount))
@@ -106,7 +111,7 @@ class BillFlowTests(TestCase):
         )
         self.product.refresh_from_db()
         self.wallet.refresh_from_db()
-        self.assertEqual((bill.coins_earned, self.product.stock), (2, 0))
+        self.assertEqual((bill.coins_earned, self.product.stock), (0, 0))
         bills_before = Bill.objects.count()
         balance_before = self.wallet.balance
         with self.assertRaisesMessage(ValidationError, 'Insufficient stock for Shirt. Only 0 available.'):
@@ -116,23 +121,20 @@ class BillFlowTests(TestCase):
         self.assertEqual((Bill.objects.count(), self.product.stock, self.wallet.balance), (bills_before, 0, balance_before))
 
     def test_bill_reward_snapshots_use_the_coin_balance_slab_at_issue_time(self):
-        self.wallet.balance = 0
-        self.wallet.save(update_fields=('balance',))
+        self.reset_wallet()
         first, _ = self.create(price='1800.00')
         second, _ = self.create(price='5000.00')
         self.wallet.refresh_from_db()
         self.assertEqual((first.coin_value_per_coin, first.coin_value_amount), (Decimal('10.00'), Decimal('180.00')))
-        self.assertEqual((second.coin_value_per_coin, second.coin_value_amount), (Decimal('10.00'), Decimal('500.00')))
+        self.assertEqual((second.coin_value_per_coin, second.coin_value_amount), (Decimal('12.00'), Decimal('600.00')))
         self.assertEqual(self.wallet.balance, 68)
         self.client.force_login(self.customer_user)
         response = self.client.get(reverse('customers:wallet'))
         self.assertContains(response, '68')
-        # All 68 active coins use the current balance slab; bills keep issue snapshots.
-        self.assertContains(response, '₹680.00')
+        self.assertContains(response, '₹780.00')
 
     def test_current_balance_slabs_revalue_the_entire_active_balance(self):
-        self.wallet.balance = 0
-        self.wallet.save(update_fields=('balance',))
+        self.reset_wallet()
         first, _ = self.create(price='2000.00')
         first_summary = get_customer_coin_summary(self.customer, self.shop)
         self.assertEqual((first.coins_earned, first_summary['active_coins'], first_summary['total_shopping']), (20, 20, Decimal('2000.00')))
@@ -148,21 +150,20 @@ class BillFlowTests(TestCase):
         third_summary = get_customer_coin_summary(self.customer, self.shop)
         self.assertEqual((third.coins_earned, third.coin_value_per_coin, third.coin_value_amount), (50, Decimal('12.00'), Decimal('600.00')))
         self.assertEqual((third_summary['active_coins'], third_summary['total_shopping']), (105, Decimal('10500.00')))
-        self.assertEqual((third_summary['current_coin_value'], third_summary['current_reward_value']), (Decimal('12.00'), Decimal('1260.00')))
+        self.assertEqual((third_summary['current_coin_value'], third_summary['current_reward_value']), (Decimal('10.95'), Decimal('1150.00')))
 
         fourth, _ = self.create(price='40000.00')
         fourth_summary = get_customer_coin_summary(self.customer, self.shop)
         self.assertEqual((fourth.coins_earned, fourth.coin_value_per_coin), (400, Decimal('15.00')))
-        self.assertEqual((fourth_summary['active_coins'], fourth_summary['current_coin_value'], fourth_summary['current_reward_value']), (505, Decimal('15.00'), Decimal('7575.00')))
+        self.assertEqual((fourth_summary['active_coins'], fourth_summary['current_coin_value'], fourth_summary['current_reward_value']), (505, Decimal('14.16'), Decimal('7150.00')))
 
     def test_shopkeeper_redemption_clears_active_coins_only_and_is_idempotent(self):
-        self.wallet.balance = 0
-        self.wallet.save(update_fields=('balance',))
+        self.reset_wallet()
         self.create(price='2000.00')
         self.create(price='3500.00')
         self.client.force_login(self.owner)
         response = self.client.get(reverse('shops:customer_detail', args=[self.customer.pk]))
-        self.assertContains(response, 'Clear')
+        self.assertContains(response, 'Redeem 55 Coins')
         key = response.context['redemption_key']
         url = reverse('shops:clear_customer_coins', args=[self.customer.pk])
         data = {'idempotency_key': key, 'confirm_redemption': 'yes', 'reward_description': 'One eligible shirt'}
@@ -186,7 +187,7 @@ class BillFlowTests(TestCase):
 
         after_clear = get_customer_coin_summary(self.customer, self.shop)
         self.assertEqual((after_clear['total_shopping'], after_clear['total_bills']), (Decimal('5500.00'), 2))
-        self.assertEqual((after_clear['active_coins'], after_clear['current_coin_value'], after_clear['current_reward_value']), (0, Decimal('10.00'), Decimal('0.00')))
+        self.assertEqual((after_clear['active_coins'], after_clear['current_coin_value'], after_clear['current_reward_value']), (0, Decimal('0.00'), Decimal('0.00')))
 
         next_bill, _ = self.create(price='2000.00')
         after_next = get_customer_coin_summary(self.customer, self.shop)
@@ -214,25 +215,55 @@ class BillFlowTests(TestCase):
         from wallet.services import calculate_coins_for_purchase
 
         examples = (
-            ('0', 0, '10.00'),
-            ('99', 0, '10.00'),
-            ('100', 1, '10.00'),
-            ('999', 9, '10.00'),
+            ('999', 0, '10.00'),
             ('1000', 10, '10.00'),
+            ('1500', 15, '10.00'),
+            ('2000', 20, '10.00'),
             ('4999', 49, '10.00'),
-            ('5000', 50, '10.00'),
-            ('9999', 99, '10.00'),
-            ('10000', 100, '12.00'),
-            ('49999', 499, '12.00'),
-            ('50000', 500, '15.00'),
+            ('5000', 50, '12.00'),
+            ('9999', 99, '12.00'),
+            ('10000', 100, '15.00'),
         )
-        for amount, expected_balance, expected_value in examples:
-            with self.subTest(balance=expected_balance):
-                rule = get_coin_rule_for_balance(self.shop, expected_balance)
-                self.assertIsNotNone(rule)
-                self.assertEqual(rule.coin_value_per_coin, Decimal(expected_value))
-                rule, coins = calculate_coins_for_purchase(self.shop, Decimal(amount), expected_balance)
-                self.assertEqual(coins, expected_balance)
+        for amount, expected_coins, expected_value in examples:
+            with self.subTest(amount=amount):
+                rule, coins = calculate_coins_for_purchase(self.shop, Decimal(amount), 0)
+                if Decimal(amount) < Decimal('1000'):
+                    self.assertIsNone(rule)
+                else:
+                    self.assertIsNotNone(rule)
+                    self.assertEqual(rule.coin_value_per_coin, Decimal(expected_value))
+                self.assertEqual(coins, expected_coins)
+
+    def test_cancelled_bill_reverses_purchase_coins_and_is_excluded_from_totals(self):
+        bill, _ = self.create(price='1800.00')
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.balance, 28)
+
+        cancelled, changed = set_bill_status(bill_id=bill.pk, status=Bill.Status.CANCELLED)
+        self.wallet.refresh_from_db()
+        summary = get_customer_coin_summary(self.customer, self.shop)
+
+        self.assertTrue(changed)
+        self.assertEqual(cancelled.status, Bill.Status.CANCELLED)
+        self.assertEqual(self.wallet.balance, 10)
+        self.assertEqual(summary['total_bills'], 0)
+        self.assertEqual(summary['total_shopping'], Decimal('0.00'))
+        self.assertEqual(summary['active_coins'], 10)
+        self.assertTrue(CoinLedger.objects.get(bill=bill).is_reversed)
+        self.assertEqual(self.client.get(reverse('customers:bill_detail', args=[bill.pk])).status_code, 302)
+
+    def test_refund_is_blocked_after_purchase_coins_from_any_bill_were_redeemed(self):
+        bill, _ = self.create(price='1800.00')
+        CoinRedemption.objects.create(
+            customer=self.customer, shop=self.shop, coins_redeemed=1,
+            purchase_coins_redeemed=1, coin_value_per_coin=10,
+            purchase_reward_value=10, reward_value=10,
+            cumulative_shopping=1800,
+        )
+        with self.assertRaisesMessage(ValidationError, 'already been redeemed'):
+            set_bill_status(bill_id=bill.pk, status=Bill.Status.REFUNDED)
+        bill.refresh_from_db()
+        self.assertEqual(bill.status, Bill.Status.COMPLETED)
 
     def test_no_active_rule_blocks_bill_with_clear_error(self):
         CoinRule.objects.filter(shop=self.shop).update(is_active=False)

@@ -98,7 +98,7 @@ class CustomerShopExperienceTests(TestCase):
         CoinRule.objects.create(shop=self.other_shop, purchase_amount='100.00', coins_awarded=99)
         response = self.client.get(reverse('customers:coin_rules'))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, '0–99 coins')
+        self.assertContains(response, 'Bills below ₹1,000 earn no purchase coins')
         self.assertContains(response, '₹10.00 per coin')
         self.assertNotContains(response, '₹100.00')
         self.assertNotContains(response, 'Earn 99 coins')
@@ -166,16 +166,16 @@ class CustomerDeletionAndWalletTests(TestCase):
         UserProfile.objects.create(user=self.user, role=UserProfile.Role.CUSTOMER)
         self.profile = CustomerProfile.objects.create(user=self.user, connected_shop=self.shop, phone='9000000001')
         self.wallet = Wallet.objects.create(customer=self.profile, balance=120)
+        CoinLedger.objects.create(wallet=self.wallet, entry_type=CoinLedger.EntryType.EARN, coin_delta=120, coin_value_per_coin=10, balance_before=0, balance_after=120)
         self.client.force_login(self.user)
 
-    def test_wallet_uses_current_coin_balance_slab_instead_of_single_shop_coin_value(self):
+    def test_wallet_uses_saved_coin_values_instead_of_revaluing_existing_coins(self):
         CoinValue.objects.create(shop=self.shop, value_per_coin='10.00')
         response = self.client.get(reverse('customers:wallet'))
-        self.assertContains(response, 'Total Active Coins')
-        self.assertContains(response, 'Your current coin balance determines the per-coin slab.')
-        self.assertContains(response, '₹12.00 / coin')
-        self.assertContains(response, '100–499 coins')
-        self.assertContains(response, '₹1440.00')
+        self.assertContains(response, 'Purchase Coins')
+        self.assertContains(response, 'Each coin keeps the value it had when earned.')
+        self.assertContains(response, '₹10.00')
+        self.assertContains(response, '₹1200.00')
 
     def test_customer_deletion_deactivates_resets_balance_and_preserves_ledger(self):
         self.assertEqual(self.client.get(reverse('customers:delete_account')).status_code, 200)
@@ -187,7 +187,7 @@ class CustomerDeletionAndWalletTests(TestCase):
         self.assertFalse(self.user.is_active)
         self.assertTrue(self.profile.is_deleted)
         self.assertEqual(self.wallet.balance, 0)
-        entry = CoinLedger.objects.get(wallet=self.wallet)
+        entry = CoinLedger.objects.get(wallet=self.wallet, entry_type=CoinLedger.EntryType.ACCOUNT_DELETION)
         self.assertEqual(entry.entry_type, CoinLedger.EntryType.ACCOUNT_DELETION)
         self.assertEqual(entry.coin_delta, -120)
         self.assertEqual(entry.balance_after, 0)

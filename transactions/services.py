@@ -10,9 +10,9 @@ from django.utils import timezone
 from accounts.models import CustomerProfile
 from shops.access import shop_is_owned_by
 from shops.models import Product
-from wallet.models import CoinLedger, Wallet
+from wallet.models import CoinLedger, CoinRedemption, Wallet
 from wallet.models import CoinRule
-from wallet.services import COINS_PER_HUNDRED, COIN_SLAB_THRESHOLDS, calculate_coins_for_purchase
+from wallet.services import COINS_PER_HUNDRED, calculate_coins_for_purchase, get_coin_source_summary
 
 from .models import Bill, BillItem
 
@@ -36,7 +36,8 @@ def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, ite
 
     if not shop_is_owned_by(shopkeeper, shop):
         raise ValidationError('You can only create bills for your own shop.')
-    if not CoinRule.objects.filter(shop=shop, is_active=True, coin_balance_threshold__in=COIN_SLAB_THRESHOLDS).exists():
+    active_tiers = set(CoinRule.objects.filter(shop=shop, is_active=True, purchase_amount__in=(Decimal('1000.00'), Decimal('5000.00'), Decimal('10000.00'))).values_list('purchase_amount', flat=True))
+    if active_tiers != {Decimal('1000.00'), Decimal('5000.00'), Decimal('10000.00')}:
         raise ValidationError('Coin earning rule is not configured for this shop. Please configure a Coin Rule before creating the bill.')
     if discount < 0:
         raise ValidationError('Discount cannot be negative.')
@@ -104,7 +105,7 @@ def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, ite
             raise ValidationError(f'Insufficient stock for {product.name}. Only {product.stock} available.')
 
     total_amount = (subtotal - discount).quantize(CENT)
-    previous_shopping = Bill.objects.filter(shop=shop, customer=customer).aggregate(
+    previous_shopping = Bill.objects.filter(shop=shop, customer=customer, status=Bill.Status.COMPLETED).aggregate(
         total=Coalesce(Sum('total_amount'), Decimal('0.00')),
     )['total']
     cumulative_shopping_after = (previous_shopping + total_amount).quantize(CENT)
@@ -114,9 +115,11 @@ def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, ite
         product.save(update_fields=('stock', 'updated_at'))
     wallet, _ = Wallet.objects.get_or_create(customer=customer)
     wallet = Wallet.objects.select_for_update().get(pk=wallet.pk)
+    get_coin_source_summary(wallet)
+    wallet.refresh_from_db(fields=('balance',))
     balance_before = wallet.balance
-    balance_after = balance_before + int(total_amount // COINS_PER_HUNDRED)
-    rule, coins_earned = calculate_coins_for_purchase(shop, total_amount, balance_after)
+    rule, coins_earned = calculate_coins_for_purchase(shop, total_amount, balance_before)
+    balance_after = balance_before + coins_earned
     value_per_coin = rule.coin_value_per_coin if rule else Decimal('0.00')
     coin_value_amount = (Decimal(coins_earned) * value_per_coin).quantize(CENT) if value_per_coin is not None else Decimal('0.00')
 
@@ -146,10 +149,49 @@ def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, ite
         wallet.save(update_fields=('balance', 'updated_at'))
         CoinLedger.objects.create(
             wallet=wallet,
+            bill=bill,
+            shop=shop,
             entry_type=CoinLedger.EntryType.EARN,
+            coin_source=CoinLedger.Source.PURCHASE,
+            coin_value_per_coin=value_per_coin,
+            transaction_reference=bill.bill_number,
             coin_delta=coins_earned,
             balance_before=balance_before,
             balance_after=balance_after,
             description=f'Bill {bill.bill_number} · {shop.name}',
         )
+    return bill, True
+
+
+@transaction.atomic
+def set_bill_status(*, bill_id, status):
+    """Cancel/refund a bill without deleting its audit history or retaining its coins."""
+    bill = Bill.objects.select_for_update().get(pk=bill_id)
+    if status not in (Bill.Status.CANCELLED, Bill.Status.REFUNDED):
+        raise ValidationError('Bills can only be moved to cancelled or refunded status here.')
+    if bill.status == status:
+        return bill, False
+    if bill.status != Bill.Status.COMPLETED:
+        raise ValidationError('A cancelled or refunded bill cannot be changed again.')
+
+    if CoinRedemption.objects.filter(
+        customer=bill.customer, shop=bill.shop,
+        redeemed_at__gte=bill.issued_at, purchase_coins_redeemed__gt=0,
+    ).exists():
+        raise ValidationError('Purchase Coins have already been redeemed after this bill. Resolve that redemption before refunding the bill.')
+
+    wallet, _ = Wallet.objects.select_for_update().get_or_create(customer=bill.customer)
+    purchase_entries = CoinLedger.objects.select_for_update().filter(
+        wallet=wallet, bill=bill, entry_type=CoinLedger.EntryType.EARN,
+        coin_source=CoinLedger.Source.PURCHASE, is_reversed=False,
+    )
+    coins_to_reverse = sum(purchase_entries.values_list('coin_delta', flat=True))
+    source_totals = get_coin_source_summary(wallet)
+    if coins_to_reverse > source_totals[CoinLedger.Source.PURCHASE]['coins']:
+        raise ValidationError('There are not enough active Purchase Coins to reverse this bill safely.')
+    purchase_entries.update(is_reversed=True)
+    get_coin_source_summary(wallet)
+    wallet.refresh_from_db(fields=('balance',))
+    bill.status = status
+    bill.save(update_fields=('status',))
     return bill, True

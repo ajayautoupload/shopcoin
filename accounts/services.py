@@ -1,4 +1,5 @@
 from uuid import uuid4
+from decimal import Decimal
 
 from django.core.exceptions import PermissionDenied
 from django.contrib.auth import get_user_model
@@ -44,17 +45,24 @@ def deactivate_customer_account(user):
     if customer.is_deleted:
         return customer
     from wallet.models import CoinLedger, Wallet
+    from wallet.services import get_coin_source_summary
     wallet, _ = Wallet.objects.select_for_update().get_or_create(customer=customer)
     before = wallet.balance
-    if before:
+    balance = before
+    for source, data in get_coin_source_summary(wallet).items():
+        coins = data['coins']
+        if not coins:
+            continue
+        unit_value = (data['value'] / coins).quantize(Decimal('0.01'))
+        next_balance = max(0, balance - coins)
         CoinLedger.objects.create(
-            wallet=wallet,
+            wallet=wallet, shop=customer.connected_shop,
             entry_type=CoinLedger.EntryType.ACCOUNT_DELETION,
-            coin_delta=-before,
-            balance_before=before,
-            balance_after=0,
+            coin_source=source, coin_value_per_coin=unit_value,
+            coin_delta=-coins, balance_before=balance, balance_after=next_balance,
             description='Balance reset when customer account was deleted.',
         )
+        balance = next_balance
     wallet.balance = 0
     wallet.save(update_fields=('balance', 'updated_at'))
     customer.is_deleted = True

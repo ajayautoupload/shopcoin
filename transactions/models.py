@@ -7,6 +7,11 @@ from django.db import models
 
 
 class Bill(models.Model):
+    class Status(models.TextChoices):
+        COMPLETED = 'COMPLETED', 'Completed'
+        CANCELLED = 'CANCELLED', 'Cancelled'
+        REFUNDED = 'REFUNDED', 'Refunded'
+
     bill_number = models.CharField(max_length=48, unique=True, editable=False)
     idempotency_key = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     shop = models.ForeignKey('shops.Shop', on_delete=models.CASCADE, related_name='bills')
@@ -22,6 +27,7 @@ class Bill(models.Model):
     wallet_balance_before = models.PositiveIntegerField(default=0)
     wallet_balance_after = models.PositiveIntegerField(default=0)
     cumulative_shopping_after = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.COMPLETED, db_index=True)
     issued_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     class Meta:

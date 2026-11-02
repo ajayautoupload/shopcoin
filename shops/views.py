@@ -27,7 +27,7 @@ def dashboard(request):
     products = Product.objects.filter(shop__owner=request.user).order_by('-created_at')[:4]
     ads = ShopAd.objects.filter(shop__owner=request.user).order_by('-created_at')[:3]
     today = timezone.localdate()
-    today_bills = shop.bills.filter(issued_at__date=today) if shop else None
+    today_bills = shop.bills.filter(issued_at__date=today, status=Bill.Status.COMPLETED) if shop else None
     today_sales = today_bills.aggregate(amount=Coalesce(Sum('total_amount'), Decimal('0.00'), output_field=DecimalField(max_digits=12, decimal_places=2)))['amount'] if shop else Decimal('0.00')
     coins_issued = today_bills.aggregate(coins=Coalesce(Sum('coins_earned'), Value(0)))['coins'] if shop else 0
     return render(request, 'shopkeeper/dashboard.html', {'shop': shop, 'products': products, 'ads': ads, 'today_sales': today_sales, 'coins_issued': coins_issued})
@@ -169,9 +169,9 @@ def customers(request):
     if shop:
         connected_customers = CustomerProfile.objects.filter(connected_shop=shop).select_related('user', 'user__profile').annotate(
             coin_balance=Coalesce('wallet__balance', Value(0)),
-            total_spent=Coalesce(Sum('bills__total_amount', filter=Q(bills__shop=shop)), Decimal('0.00'), output_field=DecimalField(max_digits=12, decimal_places=2)),
-            total_bills=Count('bills', filter=Q(bills__shop=shop), distinct=True),
-            total_coins=Coalesce(Sum('bills__coins_earned', filter=Q(bills__shop=shop)), Value(0)),
+            total_spent=Coalesce(Sum('bills__total_amount', filter=Q(bills__shop=shop, bills__status=Bill.Status.COMPLETED)), Decimal('0.00'), output_field=DecimalField(max_digits=12, decimal_places=2)),
+            total_bills=Count('bills', filter=Q(bills__shop=shop, bills__status=Bill.Status.COMPLETED), distinct=True),
+            total_coins=Coalesce(Sum('bills__coins_earned', filter=Q(bills__shop=shop, bills__status=Bill.Status.COMPLETED)), Value(0)),
         )
         query = request.GET.get('q', '').strip()
         if query:
@@ -206,9 +206,9 @@ def bills(request):
         user__profile__role='CUSTOMER', user__profile__is_deleted=False,
     ).select_related('user').annotate(
         coin_balance=Coalesce('wallet__balance', Value(0)),
-        total_spent=Coalesce(Sum('bills__total_amount', filter=Q(bills__shop=shop)), Decimal('0.00'), output_field=DecimalField(max_digits=12, decimal_places=2)),
-        total_bills=Count('bills', filter=Q(bills__shop=shop), distinct=True),
-        total_coins=Coalesce(Sum('bills__coins_earned', filter=Q(bills__shop=shop)), Value(0)),
+        total_spent=Coalesce(Sum('bills__total_amount', filter=Q(bills__shop=shop, bills__status=Bill.Status.COMPLETED)), Decimal('0.00'), output_field=DecimalField(max_digits=12, decimal_places=2)),
+        total_bills=Count('bills', filter=Q(bills__shop=shop, bills__status=Bill.Status.COMPLETED), distinct=True),
+        total_coins=Coalesce(Sum('bills__coins_earned', filter=Q(bills__shop=shop, bills__status=Bill.Status.COMPLETED)), Value(0)),
     ).order_by('user__first_name', 'user__last_name')
     if query:
         customers = customers.filter(
@@ -236,7 +236,8 @@ def create_bill_for_customer(request, customer_id):
         pk=customer_id, connected_shop=shop, is_deleted=False,
         user__is_active=True, user__profile__role='CUSTOMER', user__profile__is_deleted=False,
     )
-    has_active_coin_rule = CoinRule.objects.filter(shop=shop, is_active=True).exists()
+    active_tiers = set(CoinRule.objects.filter(shop=shop, is_active=True, purchase_amount__in=(Decimal('1000.00'), Decimal('5000.00'), Decimal('10000.00'))).values_list('purchase_amount', flat=True))
+    has_active_coin_rule = active_tiers == {Decimal('1000.00'), Decimal('5000.00'), Decimal('10000.00')}
 
     if request.method == 'POST':
         form = BillDetailsForm(request.POST)
@@ -299,6 +300,7 @@ def customer_detail(request, customer_id):
     coin_summary = get_customer_coin_summary(customer, shop)
     wallet = coin_summary['wallet']
     summary = {
+        **coin_summary,
         'total_spent': coin_summary['total_shopping'],
         'total_bills': coin_summary['total_bills'],
         'total_coins': coin_summary['active_coins'],
@@ -342,9 +344,9 @@ def clear_customer_coins(request, customer_id):
 @shopkeeper_required
 def coin_rules(request):
     shop = get_current_shopkeeper_shop(request.user)
-    rules = CoinRule.objects.filter(shop=shop, is_active=True, coin_balance_threshold__in=(0, 100, 500)) if shop else CoinRule.objects.none()
-    ranges = {0: '0–99 coins', 100: '100–499 coins', 500: '500+ coins'}
-    rule_slabs = [{'rule': rule, 'range': ranges[rule.coin_balance_threshold]} for rule in rules if rule.coin_balance_threshold in ranges]
+    rules = CoinRule.objects.filter(shop=shop, is_active=True, purchase_amount__in=(Decimal('1000.00'), Decimal('5000.00'), Decimal('10000.00'))) if shop else CoinRule.objects.none()
+    ranges = {Decimal('1000.00'): '₹1,000–₹4,999', Decimal('5000.00'): '₹5,000–₹9,999', Decimal('10000.00'): '₹10,000+'}
+    rule_slabs = [{'rule': rule, 'range': ranges[rule.purchase_amount]} for rule in rules if rule.purchase_amount in ranges]
     return render(request, 'shared/coin_rules.html', {
         'shop': shop, 'rules': rules,
         'rule_slabs': rule_slabs,
