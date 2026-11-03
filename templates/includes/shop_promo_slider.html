@@ -1,0 +1,48 @@
+{% load static %}
+<section class="shop-promotions content-section" aria-label="Shop promotions">
+  <div class="section-title-row promo-heading">
+    <div><span class="eyebrow">{{ shop.name|default:'Shop Coin' }}</span><h2>Something special</h2></div>
+    {% if shop and user.is_authenticated and user.profile.role == 'CUSTOMER' %}<a href="{% url 'customers:shop' %}">Explore shop <i class="fa-solid fa-arrow-right ms-1" aria-hidden="true"></i></a>{% endif %}
+  </div>
+
+  {% if ads %}
+    <div class="promo-slider" data-promo-slider aria-roledescription="carousel" aria-label="Promotions from {{ shop.name }}">
+      <div class="promo-slides">
+        {% for ad in ads %}
+          <article class="promo-slide{% if forloop.first %} is-active{% endif %}" data-promo-slide aria-roledescription="slide" aria-label="{{ forloop.counter }} of {{ ads|length }}" aria-hidden="{% if forloop.first %}false{% else %}true{% endif %}">
+            {% if ad.image %}<img class="promo-slide-image" src="{{ ad.image.url }}" data-fallback="{% static 'images/shop-ad-placeholder.svg' %}" alt="">{% else %}<img class="promo-slide-image" src="{% static 'images/shop-ad-placeholder.svg' %}" alt="">{% endif %}
+            <div class="promo-slide-shade"></div>
+            <div class="promo-slide-copy">
+              <span class="promo-shop-label">{{ shop.name }}</span>
+              {% if ad.title %}<h3>{{ ad.title }}</h3>{% endif %}
+              {% if ad.description %}<p>{{ ad.description }}</p>{% endif %}
+              {% if ad.offer_text %}<strong class="promo-offer">{{ ad.offer_text }}</strong>{% endif %}
+              {% if ad.cta_text and ad.cta_url %}<a class="promo-cta" href="{{ ad.cta_url }}">{{ ad.cta_text }} <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></a>{% endif %}
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+      {% if ads|length > 1 %}
+        <button class="promo-control promo-previous" type="button" data-promo-previous aria-label="Previous promotion"><i class="fa-solid fa-chevron-left" aria-hidden="true"></i></button>
+        <button class="promo-control promo-next" type="button" data-promo-next aria-label="Next promotion"><i class="fa-solid fa-chevron-right" aria-hidden="true"></i></button>
+        <div class="promo-dots" aria-label="Choose promotion">
+          {% for ad in ads %}<button class="promo-dot{% if forloop.first %} is-active{% endif %}" type="button" data-promo-dot="{{ forloop.counter0 }}" aria-label="Show promotion {{ forloop.counter }}" aria-current="{% if forloop.first %}true{% else %}false{% endif %}"></button>{% endfor %}
+        </div>
+      {% endif %}
+    </div>
+  {% elif shop and shop.status == 'APPROVED' and shop.banner %}
+    <div class="promo-slider promo-single" aria-label="Welcome to {{ shop.name }}">
+      <article class="promo-slide is-active">
+        <img class="promo-slide-image" src="{{ shop.banner.url }}" data-fallback="{% static 'images/shop-ad-placeholder.svg' %}" alt="">
+        <div class="promo-slide-shade"></div>
+        <div class="promo-slide-copy"><span class="promo-shop-label">Welcome to</span><h3>{{ shop.name }}</h3></div>
+      </article>
+    </div>
+  {% else %}
+    <div class="promo-default">
+      <span class="promo-default-icon"><i class="fa-solid fa-sparkles" aria-hidden="true"></i></span>
+      <div><h3>Something special is on its way</h3><p>{% if shop %}{{ shop.name }} promotions will appear here.{% else %}Connect with a shop to discover its latest offers.{% endif %}</p></div>
+      {% if shop %}<span class="promo-default-coins" aria-hidden="true"><i class="fa-solid fa-coins"></i></span>{% endif %}
+    </div>
+  {% endif %}
+</section>

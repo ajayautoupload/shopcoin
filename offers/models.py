@@ -28,9 +28,12 @@ class ShopOffer(models.Model):
 class ShopAd(models.Model):
     shop = models.ForeignKey('shops.Shop', on_delete=models.CASCADE, related_name='ads')
     image = models.ImageField(upload_to='shop_ads/')
-    title = models.CharField(max_length=180)
-    description = models.CharField(max_length=280)
+    title = models.CharField(max_length=180, blank=True)
+    description = models.CharField(max_length=280, blank=True)
     offer_text = models.CharField(max_length=120, blank=True)
+    cta_text = models.CharField(max_length=60, blank=True)
+    cta_url = models.URLField(max_length=500, blank=True)
+    display_order = models.PositiveSmallIntegerField(default=0, db_index=True)
     start_date = models.DateField()
     end_date = models.DateField()
     is_active = models.BooleanField(default=True)
@@ -39,7 +42,7 @@ class ShopAd(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ('start_date', '-created_at')
+        ordering = ('display_order', 'start_date', '-created_at')
         indexes = [models.Index(fields=('shop', 'is_active', 'start_date', 'end_date'))]
 
     def clean(self):

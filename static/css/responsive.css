@@ -1,0 +1,307 @@
+/* Shared mobile safeguards and the responsive shopkeeper bill form. */
+img,
+svg {
+  max-width: 100%;
+}
+
+.navbar .container,
+.main-content,
+.app-shell,
+.bill-form,
+.bill-item-fields,
+.bill-field {
+  min-width: 0;
+}
+
+.brand-shop-logo {
+  display: block;
+  width: 40px;
+  height: 40px;
+  max-width: 40px;
+  flex: 0 0 40px;
+  object-fit: contain;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.product-image-wrap img,
+.manage-product-image img,
+.shopkeeper-preview-image img,
+.product-detail-image img {
+  object-fit: contain;
+}
+
+.bottom-nav a {
+  min-width: 0;
+  padding-inline: 1px;
+  font-size: clamp(.5rem, 2.6vw, .65rem);
+  line-height: 1.2;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.bottom-nav a span {
+  max-width: 100%;
+}
+
+body:has(.bottom-nav) .main-content {
+  padding-bottom: 5.25rem;
+}
+
+.bill-page {
+  width: 100%;
+}
+
+.bill-heading h1 {
+  font-size: clamp(1.55rem, 7vw, 2.2rem);
+  overflow-wrap: anywhere;
+}
+
+.bill-heading p {
+  overflow-wrap: anywhere;
+}
+
+.bill-form {
+  padding: clamp(.85rem, 4vw, 1.4rem);
+}
+
+.bill-items {
+  display: grid;
+  gap: .75rem;
+}
+
+.bill-line {
+  min-width: 0;
+  padding: .85rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+}
+
+.bill-item-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: .75rem;
+}
+
+.bill-field {
+  min-width: 0;
+}
+
+.bill-field label,
+.bill-field-label {
+  display: block;
+  margin-bottom: .35rem;
+  color: var(--ink);
+  font-size: .8rem;
+  font-weight: 700;
+}
+
+.bill-field label span {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.bill-field-catalog,
+.bill-field-name {
+  grid-column: 1 / -1;
+}
+
+.bill-field .form-control,
+.bill-field .form-select {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  padding-inline: .7rem;
+  font-size: 1rem;
+}
+
+.bill-field input[type="number"] {
+  font-variant-numeric: tabular-nums;
+}
+
+.bill-field .errorlist {
+  margin: .3rem 0 0;
+  padding: 0;
+  color: #b02a37;
+  font-size: .78rem;
+  list-style: none;
+}
+
+.bill-field-remove {
+  grid-column: 1 / -1;
+}
+
+.delete-control {
+  display: none;
+}
+
+.bill-field-remove .btn,
+.bill-add-button {
+  min-height: 48px;
+}
+
+.bill-field-remove .btn {
+  width: 100%;
+}
+
+.bill-add-button {
+  width: 100%;
+  margin-top: .85rem;
+  font-weight: 650;
+}
+
+.bill-divider {
+  margin: 1.2rem 0;
+  color: var(--line);
+  opacity: 1;
+}
+
+.bill-totals-row {
+  display: grid;
+  gap: 1rem;
+}
+
+.bill-discount-field .form-control {
+  width: 100%;
+  min-height: 50px;
+  font-size: 1.05rem;
+}
+
+.bill-summary {
+  display: grid;
+  gap: .55rem;
+  padding: 1rem;
+  border: 1px solid #dcece3;
+  border-radius: 15px;
+  background: #f4f9f6;
+}
+
+.bill-summary > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: .75rem;
+  min-width: 0;
+}
+
+.bill-summary strong {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.bill-summary .bill-final-total {
+  padding-top: .55rem;
+  border-top: 1px solid #dce8e1;
+  font-size: 1.12rem;
+}
+
+.bill-final-total strong {
+  color: var(--brand);
+}
+
+.bill-summary p {
+  margin: .1rem 0 0;
+  color: var(--brand);
+  font-size: .82rem;
+  line-height: 1.45;
+}
+
+.bill-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: .6rem;
+  margin-top: 1rem;
+}
+
+.bill-actions .btn {
+  min-height: 50px;
+  width: 100%;
+}
+
+@media (max-width: 359.98px) {
+  .bill-form {
+    padding: .75rem;
+  }
+
+  .bill-line {
+    padding: .7rem;
+  }
+
+  .bottom-nav {
+    padding-inline: 0;
+  }
+
+  .bottom-nav a {
+    font-size: .49rem;
+  }
+}
+
+@media (min-width: 576px) {
+  .bill-line {
+    padding: 1rem;
+  }
+
+  .bill-item-fields {
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1.5fr) minmax(75px, .65fr) minmax(105px, .85fr) minmax(92px, .65fr);
+    align-items: end;
+    gap: .65rem;
+  }
+
+  .bill-field-catalog,
+  .bill-field-name,
+  .bill-field-remove {
+    grid-column: auto;
+  }
+
+  .bill-field-remove .btn {
+    padding-inline: .5rem;
+  }
+
+  .bill-add-button {
+    width: auto;
+    min-width: 190px;
+  }
+
+  .bill-totals-row {
+    grid-template-columns: minmax(180px, .8fr) minmax(0, 1.2fr);
+    align-items: end;
+  }
+
+  .bill-actions {
+    grid-template-columns: minmax(120px, auto) minmax(190px, auto);
+    justify-content: end;
+  }
+
+  .bill-actions .btn {
+    width: auto;
+  }
+}
+
+@media (min-width: 768px) {
+  .bill-form {
+    padding: 1.5rem;
+  }
+
+  .bill-items {
+    gap: .6rem;
+  }
+
+  .bill-line {
+    padding: 1rem;
+  }
+}
+/* Credit / Udhar cards remain readable without horizontal scrolling. */
+.credit-list { display: grid; gap: 1rem; }
+.credit-card, .credit-summary { min-width: 0; overflow-wrap: anywhere; }
+.credit-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .65rem; margin: 1rem 0; }
+.credit-facts span { display: grid; gap: .2rem; color: #69736f; font-size: .9rem; }
+.credit-facts b { color: #17231f; font-size: 1rem; }
+.credit-summary > strong { display: block; font-size: clamp(2rem, 9vw, 3rem); color: #136c55; }
+.credit-payment { display: grid; grid-template-columns: auto 1fr; gap: .2rem .75rem; padding: .75rem 0; border-top: 1px solid #e4e9e6; }
+.credit-payment span { text-align: right; color: #69736f; }
+.credit-payment small { grid-column: 1 / -1; color: #69736f; overflow-wrap: anywhere; }
+.credit-form { max-width: 46rem; }
+@media (max-width: 380px) { .credit-facts { grid-template-columns: 1fr; } }

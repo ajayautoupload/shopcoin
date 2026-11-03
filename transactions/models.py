@@ -1,4 +1,5 @@
 import uuid
+from decimal import Decimal
 from django.utils import timezone
 
 from django.conf import settings
@@ -64,3 +65,57 @@ class BillItem(models.Model):
 
     def __str__(self):
         return f'{self.product_name} × {self.quantity}'
+
+
+class Credit(models.Model):
+    class Status(models.TextChoices):
+        UNPAID = 'UNPAID', 'Unpaid'
+        PARTIAL = 'PARTIAL', 'Partially paid'
+        PAID = 'PAID', 'Paid'
+
+    shop = models.ForeignKey('shops.Shop', on_delete=models.CASCADE, related_name='credits')
+    customer = models.ForeignKey('accounts.CustomerProfile', on_delete=models.CASCADE, related_name='credits')
+    bill = models.ForeignKey(Bill, on_delete=models.SET_NULL, null=True, blank=True, related_name='credits')
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='created_credits')
+    original_amount = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(Decimal('0.01'))])
+    paid_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    description = models.CharField(max_length=500, blank=True)
+    reference = models.CharField(max_length=100, blank=True)
+    due_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.UNPAID, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ('-created_at', '-pk')
+        constraints = [
+            models.CheckConstraint(condition=models.Q(original_amount__gt=0), name='credit_original_positive'),
+            models.CheckConstraint(condition=models.Q(paid_amount__gte=0) & models.Q(paid_amount__lte=models.F('original_amount')), name='credit_paid_within_original'),
+        ]
+
+    @property
+    def remaining_amount(self):
+        return self.original_amount - self.paid_amount
+
+
+class CreditPayment(models.Model):
+    credit = models.ForeignKey(Credit, on_delete=models.PROTECT, related_name='payments')
+    amount = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(Decimal('0.01'))])
+    balance_after = models.DecimalField(max_digits=12, decimal_places=2)
+    payment_reference = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    received_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='received_credit_payments')
+    coin_ledger = models.OneToOneField('wallet.CoinLedger', on_delete=models.SET_NULL, null=True, blank=True, related_name='credit_payment')
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ('created_at', 'pk')
+        constraints = [models.CheckConstraint(condition=models.Q(amount__gt=0), name='credit_payment_amount_positive')]
+
+
+class CreditPaymentReversal(models.Model):
+    payment = models.OneToOneField(CreditPayment, on_delete=models.PROTECT, related_name='reversal')
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    reference = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    reversed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='reversed_credit_payments')
+    coin_ledger = models.OneToOneField('wallet.CoinLedger', on_delete=models.SET_NULL, null=True, blank=True, related_name='credit_payment_reversal')
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)

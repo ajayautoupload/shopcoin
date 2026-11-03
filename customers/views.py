@@ -20,6 +20,7 @@ from django.db.models import Count, Sum
 from django.db.models.functions import Coalesce
 from decimal import Decimal
 from transactions.models import Bill
+from transactions.models import Credit
 
 
 @customer_required
@@ -32,7 +33,9 @@ def dashboard(request):
     if shop and shop.status == Shop.Status.APPROVED:
         products = Product.objects.filter(shop=shop, is_active=True).order_by('-is_new', '-created_at')[:8]
         today = timezone.localdate()
-        ads = ShopAd.objects.filter(shop=shop, is_active=True, start_date__lte=today, end_date__gte=today)
+        ads = ShopAd.objects.filter(
+            shop=shop, is_active=True, start_date__lte=today, end_date__gte=today,
+        ).order_by('display_order', 'start_date', '-created_at')
         offers = shop.offers.filter(is_active=True).filter(
             Q(starts_at__isnull=True) | Q(starts_at__lte=timezone.now()),
             Q(ends_at__isnull=True) | Q(ends_at__gt=timezone.now()),
@@ -44,6 +47,14 @@ def dashboard(request):
     summary = {**coin_summary, **historical, 'total_spent': coin_summary['total_shopping'], 'total_coins': coin_summary['active_coins']}
     today_engagement = WebsiteEngagement.objects.filter(customer=profile, visit_date=timezone.localdate()).first()
     return render(request, 'customer/dashboard.html', {'profile': profile, 'shop': shop, 'products': products, 'offers': offers, 'ads': ads, 'wallet': wallet, 'current_worth': summary['current_reward_value'], 'recent_bills': recent_bills, 'summary': summary, 'coin_worth': summary['current_reward_value'], 'today_engagement': today_engagement})
+
+
+@customer_required
+def my_credit(request):
+    profile = request.user.customer_profile
+    credits = Credit.objects.filter(customer=profile, shop=profile.connected_shop).select_related('shop', 'bill').prefetch_related('payments__coin_ledger') if profile.connected_shop_id else Credit.objects.none()
+    totals = credits.aggregate(original=Coalesce(Sum('original_amount'), Decimal('0.00')), paid=Coalesce(Sum('paid_amount'), Decimal('0.00')))
+    return render(request, 'customer/credit.html', {'credits': credits, 'total_original': totals['original'], 'total_paid': totals['paid'], 'total_remaining': totals['original'] - totals['paid']})
 
 
 @customer_required
@@ -123,7 +134,9 @@ def shop(request):
     if connected_shop and connected_shop.status == Shop.Status.APPROVED:
         products = Product.objects.filter(shop=connected_shop, is_active=True).order_by('-is_new', '-created_at')
         today = timezone.localdate()
-        ads = ShopAd.objects.filter(shop=connected_shop, is_active=True, start_date__lte=today, end_date__gte=today)
+        ads = ShopAd.objects.filter(
+            shop=connected_shop, is_active=True, start_date__lte=today, end_date__gte=today,
+        ).order_by('display_order', 'start_date', '-created_at')
         offers = connected_shop.offers.filter(is_active=True).filter(
             Q(starts_at__isnull=True) | Q(starts_at__lte=timezone.now()),
             Q(ends_at__isnull=True) | Q(ends_at__gt=timezone.now()),

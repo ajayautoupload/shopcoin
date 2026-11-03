@@ -69,6 +69,12 @@ INSTALLED_APPS = [
     'reports',
 ]
 
+# Use durable object storage for uploaded media when a bucket is configured.
+# Local development keeps Django's filesystem storage by default.
+MEDIA_STORAGE_BUCKET = os.environ.get('AWS_STORAGE_BUCKET_NAME', '').strip()
+if MEDIA_STORAGE_BUCKET:
+    INSTALLED_APPS.append('storages')
+
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
@@ -154,12 +160,27 @@ USE_TZ = True
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_DIRS = [BASE_DIR / 'static']
-MEDIA_URL = '/media/'
+MEDIA_URL = os.environ.get('DJANGO_MEDIA_URL', '/media/').strip()
+if not MEDIA_URL.endswith('/'):
+    MEDIA_URL += '/'
 MEDIA_ROOT = Path(os.environ.get('DJANGO_MEDIA_ROOT', BASE_DIR / 'media'))
 
 STORAGES = {
     'default': {
-        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+        'BACKEND': (
+            'storages.backends.s3.S3Storage'
+            if MEDIA_STORAGE_BUCKET else 'django.core.files.storage.FileSystemStorage'
+        ),
+        **({
+            'OPTIONS': {
+                'bucket_name': MEDIA_STORAGE_BUCKET,
+                'region_name': os.environ.get('AWS_S3_REGION_NAME') or None,
+                'endpoint_url': os.environ.get('AWS_S3_ENDPOINT_URL') or None,
+                'addressing_style': os.environ.get('AWS_S3_ADDRESSING_STYLE') or None,
+                'default_acl': None,
+                'file_overwrite': False,
+            },
+        } if MEDIA_STORAGE_BUCKET else {}),
     },
     'staticfiles': {
         'BACKEND': (

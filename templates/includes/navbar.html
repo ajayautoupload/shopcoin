@@ -10,10 +10,12 @@
         <a class="btn btn-brand btn-sm" href="{% url 'customers:login' %}">Customer Login</a>
       </div>
     {% elif user.is_authenticated and not user.is_superuser and user.profile.role == 'CUSTOMER' %}
-      <a class="navbar-brand fw-bold text-brand shop-header-name" href="{% url 'customers:dashboard' %}" style="display:inline-flex;align-items:center;gap:.5rem;max-width:45vw;white-space:nowrap;overflow:hidden;vertical-align:middle">
-        {% if user.customer_profile.connected_shop.logo %}<img class="brand-shop-logo" width="40" height="40" style="display:block;width:40px;height:40px;max-width:40px;object-fit:cover;flex:0 0 40px;border-radius:10px" src="{{ user.customer_profile.connected_shop.logo.url }}" alt="{{ user.customer_profile.connected_shop.name }} logo">{% else %}<span class="brand-mark"><i class="fa-solid fa-coins"></i></span>{% endif %}
-        <span style="overflow:hidden;text-overflow:ellipsis">{% if user.customer_profile.connected_shop %}{{ user.customer_profile.connected_shop.name }}{% else %}Shop Coin{% endif %}</span>
-      </a>
+      {% with connected_shop=user.customer_profile.connected_shop %}
+        <a class="navbar-brand fw-bold text-brand shop-header-name" href="{% url 'customers:dashboard' %}">
+          {% if connected_shop and connected_shop.logo %}<img class="brand-shop-logo" width="40" height="40" src="{{ connected_shop.logo.url }}" data-fallback="{% static 'images/shop-placeholder.svg' %}" alt="{{ connected_shop.name }} logo">{% else %}<span class="brand-mark"><i class="fa-solid fa-coins" aria-hidden="true"></i></span>{% endif %}
+          <span class="shop-brand-copy"><strong>{% if connected_shop %}{{ connected_shop.name }}{% else %}Shop Coin{% endif %}</strong>{% if connected_shop.city %}<small>{{ connected_shop.city }}</small>{% endif %}</span>
+        </a>
+      {% endwith %}
       <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#customerNav" aria-label="Toggle navigation"><span class="navbar-toggler-icon"></span></button>
       <div class="collapse navbar-collapse" id="customerNav"><div class="navbar-nav ms-auto align-items-lg-center gap-lg-2">
         <a class="desktop-nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" href="{% url 'customers:dashboard' %}">Home</a>
@@ -25,9 +27,9 @@
       </div></div>
     {% elif user.is_authenticated and not user.is_superuser and user.profile.role == 'SHOPKEEPER' %}
       {% with shop=user.shops.first %}
-        <a class="navbar-brand fw-bold text-brand shop-header-name" href="{% url 'shops:dashboard' %}" style="display:inline-flex;align-items:center;gap:.5rem;max-width:45vw;white-space:nowrap;overflow:hidden;vertical-align:middle">
-          {% if shop.logo %}<img class="brand-shop-logo" width="40" height="40" style="display:block;width:40px;height:40px;max-width:40px;object-fit:cover;flex:0 0 40px;border-radius:10px" src="{{ shop.logo.url }}" alt="{{ shop.name }} logo">{% else %}<span class="brand-mark"><i class="fa-solid fa-coins"></i></span>{% endif %}
-          <span style="overflow:hidden;text-overflow:ellipsis">{% if shop %}{{ shop.name }}{% else %}Shop Coin{% endif %}</span>
+        <a class="navbar-brand fw-bold text-brand shop-header-name" href="{% url 'shops:dashboard' %}">
+          {% if shop and shop.logo %}<img class="brand-shop-logo" width="40" height="40" src="{{ shop.logo.url }}" data-fallback="{% static 'images/shop-placeholder.svg' %}" alt="{{ shop.name }} logo">{% else %}<span class="brand-mark"><i class="fa-solid fa-coins" aria-hidden="true"></i></span>{% endif %}
+          <span class="shop-brand-copy"><strong>{% if shop %}{{ shop.name }}{% else %}Shop Coin{% endif %}</strong>{% if shop.city %}<small>{{ shop.city }}</small>{% endif %}</span>
         </a>
       {% endwith %}
       <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#shopkeeperNav" aria-label="Toggle navigation"><span class="navbar-toggler-icon"></span></button>

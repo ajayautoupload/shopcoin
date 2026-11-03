@@ -7,6 +7,8 @@
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" rel="stylesheet">
   <link href="{% static 'css/style.css' %}" rel="stylesheet">
   <link href="{% static 'css/customer.css' %}" rel="stylesheet">
+  <link href="{% static 'css/responsive.css' %}" rel="stylesheet">
+  <link href="{% static 'css/customer-pages.css' %}" rel="stylesheet">
   {% if request.resolver_match.url_name == 'home' %}<link href="{% static 'css/landing.css' %}" rel="stylesheet">{% endif %}
 </head>
 <body>
@@ -17,6 +19,7 @@
   {% include 'includes/bottom_nav.html' %}
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="{% static 'js/app.js' %}"></script>
+  <script src="{% static 'js/promo-slider.js' %}" defer></script>
   {% if user.is_authenticated and not user.is_superuser and user.profile.role == 'CUSTOMER' %}<script src="{% static 'js/website_engagement.js' %}" defer data-start-url="{% url 'customers:engagement_start' %}" data-heartbeat-url="{% url 'customers:engagement_heartbeat' %}"></script>{% endif %}
 </body>
 </html>

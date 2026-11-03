@@ -1,6 +1,145 @@
 {% extends 'base.html' %}
 {% block title %}Create bill · Shop Coin{% endblock %}
-{% block content %}<div class="container app-shell py-4"><a class="back-link" href="{% url 'shops:bills' %}"><i class="fa-solid fa-arrow-left"></i> Customers</a><header class="page-heading mt-3"><span class="eyebrow">{{ shop.name }}</span><h1>Create bill for {{ customer.user.get_full_name|default:customer.user.username }}</h1><p>{{ customer.phone }} · Bill number and date are generated when submitted.</p></header><form method="post" id="bill-form" class="panel-card mt-3">{% csrf_token %}{{ form.idempotency_key }}{% if not has_active_coin_rule %}<div class="alert alert-warning">Coin earning rule is not configured for this shop. Please configure a Coin Rule before creating the bill.</div>{% endif %}{% for error in form.non_field_errors %}<div class="alert alert-danger">{{ error }}</div>{% endfor %}<div class="table-responsive"><table class="table align-middle"><thead><tr><th>Catalog item (optional)</th><th>Product name</th><th>Qty</th><th>Price (₹)</th><th></th></tr></thead><tbody id="bill-items">{{ item_formset.management_form }}{% for line in item_formset %}<tr class="bill-line">{% for hidden in line.hidden_fields %}{{ hidden }}{% endfor %}<td>{{ line.product }}{{ line.product.errors }}</td><td>{{ line.product_name }}{{ line.product_name.errors }}</td><td>{{ line.quantity }}{{ line.quantity.errors }}</td><td>{{ line.unit_price }}{{ line.unit_price.errors }}</td><td>{% if line.DELETE %}{{ line.DELETE.as_hidden }}<button class="btn btn-sm btn-outline-danger remove-line" type="button">Remove</button>{% endif %}</td></tr>{% if line.non_field_errors %}<tr><td colspan="5" class="text-danger">{{ line.non_field_errors }}</td></tr>{% endif %}{% endfor %}</tbody></table></div><template id="empty-line">{% with line=item_formset.empty_form %}<tr class="bill-line">{% for hidden in line.hidden_fields %}{{ hidden }}{% endfor %}<td>{{ line.product }}</td><td>{{ line.product_name }}</td><td>{{ line.quantity }}</td><td>{{ line.unit_price }}</td><td>{{ line.DELETE.as_hidden }}<button class="btn btn-sm btn-outline-danger remove-line" type="button">Remove</button></td></tr>{% endwith %}</template><button type="button" id="add-line" class="btn btn-outline-brand">+ Add Product</button><hr><div class="row g-3 align-items-end"><div class="col-md-4"><label class="form-label" for="id_discount">Discount (₹)</label>{{ form.discount }}{% for e in form.discount.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}</div><div class="col-md-8 text-md-end"><div>Subtotal: ₹<strong id="subtotal">0.00</strong></div><div>Final amount: ₹<strong id="final-total">0.00</strong></div><div class="text-success">Coins earned: calculated using your active coin rules</div></div></div><div class="d-flex gap-2 justify-content-end mt-4"><a class="btn btn-outline-secondary" href="{% url 'shops:bills' %}">Cancel</a><button class="btn btn-brand btn-lg" type="submit" {% if not has_active_coin_rule %}disabled{% endif %}>Generate Bill</button></div></form></div><script>
-(()=>{const rows=document.getElementById('bill-items'),total=document.getElementById('id_items-TOTAL_FORMS'),empty=document.getElementById('empty-line').innerHTML,prices={ {% for product in shop.products.all %}"{{ product.pk }}":{{ product.effective_price }},{% endfor %} };function calc(){let s=0;rows.querySelectorAll('.bill-line').forEach(r=>{if(r.querySelector('[name$="-DELETE"]')?.checked)return;s+=(parseFloat(r.querySelector('.bill-price')?.value)||0)*(parseInt(r.querySelector('.bill-quantity')?.value)||0)});const d=parseFloat(document.getElementById('id_discount').value)||0;document.getElementById('subtotal').textContent=s.toFixed(2);document.getElementById('final-total').textContent=Math.max(0,s-d).toFixed(2)}document.getElementById('add-line').addEventListener('click',()=>{rows.insertAdjacentHTML('beforeend',empty.replaceAll('__prefix__',total.value));total.value=Number(total.value)+1;calc()});rows.addEventListener('click',e=>{if(e.target.matches('.remove-line')){const row=e.target.closest('tr');const del=row.querySelector('[name$="-DELETE"]');if(del){del.checked=true;row.hidden=true}else row.remove();calc()}});rows.addEventListener('input',calc);document.getElementById('id_discount').addEventListener('input',calc);rows.addEventListener('change',e=>{if(e.target.matches('.bill-product-select')){const opt=e.target.selectedOptions[0],row=e.target.closest('tr'),name=row.querySelector('input[name$="-product_name"]'),price=row.querySelector('.bill-price');if(opt.value){if(!name.value)name.value=opt.textContent.trim();if(!price.value)price.value=prices[opt.value]||'';}calc()}});calc()})();
-</script>{% endblock %}
+{% block content %}
+<div class="container app-shell py-4 bill-page">
+  <a class="back-link" href="{% url 'shops:bills' %}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Customers</a>
+  <header class="page-heading mt-3 bill-heading">
+    <span class="eyebrow">{{ shop.name }}</span>
+    <h1>Create bill for {{ customer.user.get_full_name|default:customer.user.username }}</h1>
+    <p>{{ customer.phone }} · Bill number and date are generated when submitted.</p>
+  </header>
 
+  <form method="post" id="bill-form" class="panel-card mt-3 bill-form">
+    {% csrf_token %}
+    {{ form.idempotency_key }}
+    {% if not has_active_coin_rule %}<div class="alert alert-warning">Coin earning rule is not configured for this shop. Please configure a Coin Rule before creating the bill.</div>{% endif %}
+    {% for error in form.non_field_errors %}<div class="alert alert-danger">{{ error }}</div>{% endfor %}
+
+    <div class="bill-items" id="bill-items">
+      {{ item_formset.management_form }}
+      {% for line in item_formset %}
+        <article class="bill-line">
+          {% for hidden in line.hidden_fields %}{{ hidden }}{% endfor %}
+          <div class="bill-item-fields">
+            <div class="bill-field bill-field-catalog">
+              <label for="{{ line.product.id_for_label }}">Catalog item <span>(optional)</span></label>
+              {{ line.product }}{{ line.product.errors }}
+            </div>
+            <div class="bill-field bill-field-name">
+              <label for="{{ line.product_name.id_for_label }}">Product name</label>
+              {{ line.product_name }}{{ line.product_name.errors }}
+            </div>
+            <div class="bill-field bill-field-quantity">
+              <label for="{{ line.quantity.id_for_label }}">Quantity</label>
+              {{ line.quantity }}{{ line.quantity.errors }}
+            </div>
+            <div class="bill-field bill-field-price">
+              <label for="{{ line.unit_price.id_for_label }}">Price (₹)</label>
+              {{ line.unit_price }}{{ line.unit_price.errors }}
+            </div>
+            {% if line.DELETE %}<div class="bill-field bill-field-remove"><span class="delete-control">{{ line.DELETE }}</span><button class="btn btn-outline-danger remove-line" type="button"><i class="fa-regular fa-trash-can" aria-hidden="true"></i> Remove</button></div>{% endif %}
+          </div>
+          {% if line.non_field_errors %}<div class="text-danger small mt-2">{{ line.non_field_errors }}</div>{% endif %}
+        </article>
+      {% endfor %}
+    </div>
+
+    <template id="empty-line">
+      {% with line=item_formset.empty_form %}
+        <article class="bill-line">
+          {% for hidden in line.hidden_fields %}{{ hidden }}{% endfor %}
+          <div class="bill-item-fields">
+            <div class="bill-field bill-field-catalog"><label for="{{ line.product.id_for_label }}">Catalog item <span>(optional)</span></label>{{ line.product }}</div>
+            <div class="bill-field bill-field-name"><label for="{{ line.product_name.id_for_label }}">Product name</label>{{ line.product_name }}</div>
+            <div class="bill-field bill-field-quantity"><label for="{{ line.quantity.id_for_label }}">Quantity</label>{{ line.quantity }}</div>
+            <div class="bill-field bill-field-price"><label for="{{ line.unit_price.id_for_label }}">Price (₹)</label>{{ line.unit_price }}</div>
+            <div class="bill-field bill-field-remove"><span class="delete-control">{{ line.DELETE }}</span><button class="btn btn-outline-danger remove-line" type="button"><i class="fa-regular fa-trash-can" aria-hidden="true"></i> Remove</button></div>
+          </div>
+        </article>
+      {% endwith %}
+    </template>
+
+    <button type="button" id="add-line" class="btn btn-outline-brand bill-add-button"><i class="fa-solid fa-plus me-1" aria-hidden="true"></i> Add Product</button>
+    <hr class="bill-divider">
+
+    <div class="bill-totals-row">
+      <div class="bill-field bill-discount-field">
+        <label class="form-label" for="id_discount">Discount (₹)</label>
+        {{ form.discount }}
+        {% for error in form.discount.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
+      </div>
+      <section class="bill-summary" aria-label="Bill totals">
+        <div><span>Subtotal</span><strong>₹<span id="subtotal">0.00</span></strong></div>
+        <div class="bill-final-total"><span>Final amount</span><strong>₹<span id="final-total">0.00</span></strong></div>
+        <p><i class="fa-solid fa-coins" aria-hidden="true"></i> Coins earned are calculated using your active coin rules.</p>
+      </section>
+    </div>
+
+    <div class="bill-actions">
+      <a class="btn btn-outline-secondary" href="{% url 'shops:bills' %}">Cancel</a>
+      <button class="btn btn-brand btn-lg" type="submit" {% if not has_active_coin_rule %}disabled{% endif %}><i class="fa-solid fa-receipt me-1" aria-hidden="true"></i> Generate Bill</button>
+    </div>
+  </form>
+</div>
+<script>
+(() => {
+  const rows = document.getElementById('bill-items');
+  const total = document.getElementById('id_items-TOTAL_FORMS');
+  const empty = document.getElementById('empty-line').innerHTML;
+  const discount = document.getElementById('id_discount');
+  const prices = {
+    {% for product in shop.products.all %}"{{ product.pk }}": {{ product.effective_price }},{% endfor %}
+  };
+
+  function calculateTotals() {
+    let subtotal = 0;
+    rows.querySelectorAll('.bill-line').forEach((row) => {
+      if (row.querySelector('[name$="-DELETE"]')?.checked) return;
+      const price = Number.parseFloat(row.querySelector('.bill-price')?.value) || 0;
+      const quantity = Number.parseInt(row.querySelector('.bill-quantity')?.value, 10) || 0;
+      subtotal += price * quantity;
+    });
+    const discountAmount = Number.parseFloat(discount.value) || 0;
+    document.getElementById('subtotal').textContent = subtotal.toFixed(2);
+    document.getElementById('final-total').textContent = Math.max(0, subtotal - discountAmount).toFixed(2);
+  }
+
+  document.getElementById('add-line').addEventListener('click', () => {
+    rows.insertAdjacentHTML('beforeend', empty.replaceAll('__prefix__', total.value));
+    total.value = Number(total.value) + 1;
+    calculateTotals();
+  });
+
+  rows.addEventListener('click', (event) => {
+    const removeButton = event.target.closest('.remove-line');
+    if (!removeButton) return;
+    const row = removeButton.closest('.bill-line');
+    const deleteField = row.querySelector('[name$="-DELETE"]');
+    if (deleteField) {
+      deleteField.checked = true;
+      row.hidden = true;
+    } else {
+      row.remove();
+    }
+    calculateTotals();
+  });
+
+  rows.addEventListener('input', calculateTotals);
+  discount.addEventListener('input', calculateTotals);
+  rows.addEventListener('change', (event) => {
+    if (!event.target.matches('.bill-product-select')) return;
+    const selectedOption = event.target.selectedOptions[0];
+    const row = event.target.closest('.bill-line');
+    const name = row.querySelector('input[name$="-product_name"]');
+    const price = row.querySelector('.bill-price');
+    if (event.target.value) {
+      if (!name.value) name.value = selectedOption.textContent.trim();
+      if (!price.value) price.value = prices[event.target.value] || '';
+    }
+    calculateTotals();
+  });
+
+  calculateTotals();
+})();
+</script>
+{% endblock %}

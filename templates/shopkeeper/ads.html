@@ -1,8 +1,35 @@
 {% extends 'base.html' %}
 {% load static %}
-{% block title %}My Ads · Shop Coin{% endblock %}
+{% block title %}Banners &amp; promotions · Shop Coin{% endblock %}
 {% block content %}
-<div class="container app-shell py-4"><header class="page-heading manage-heading"><div><span class="eyebrow">Shop promotions</span><h1>My Ads</h1><p>Promotions are shown only to customers connected to your shop.</p></div><a class="btn btn-brand" href="{% url 'shops:ad_create' %}"><i class="fa-solid fa-plus me-1"></i>Create Shop Ad</a></header>
-  {% if ads %}<div class="manage-ad-list">{% for ad in ads %}<article class="manage-ad-card"><div class="manage-ad-image"><img src="{{ ad.image.url }}" data-fallback="{% static 'images/shop-ad-placeholder.svg' %}" alt="{{ ad.title }}"></div><div class="manage-ad-info"><span class="eyebrow">{{ ad.shop.name }}</span><h2>{{ ad.title }}</h2><p>{{ ad.description }}</p>{% if ad.offer_text %}<strong class="ad-offer-text">{{ ad.offer_text }}</strong>{% endif %}<div class="manage-meta"><span>{{ ad.start_date }} – {{ ad.end_date }}</span><span class="status-pill {% if ad.is_active %}status-on{% else %}status-off{% endif %}">{% if ad.is_active %}Active{% else %}Inactive{% endif %}</span></div><div class="manage-actions"><a class="btn btn-outline-brand btn-sm" href="{% url 'shops:ad_edit' ad.pk %}">Edit</a><form method="post" action="{% url 'shops:ad_toggle' ad.pk %}">{% csrf_token %}<button class="btn btn-outline-brand btn-sm" type="submit">{% if ad.is_active %}Deactivate{% else %}Activate{% endif %}</button></form><a class="btn btn-outline-danger btn-sm" href="{% url 'shops:ad_delete' ad.pk %}">Delete</a></div></div></article>{% endfor %}</div>{% else %}<div class="empty-shop-card mt-3"><i class="fa-solid fa-bullhorn"></i><p>No ads yet.</p><span>Create a promotion for customers connected to your shop.</span><a class="btn btn-brand mt-3" href="{% url 'shops:ad_create' %}">Create your first ad</a></div>{% endif %}
+<div class="container app-shell py-4">
+  <header class="page-heading manage-heading">
+    <div><span class="eyebrow">Shop promotions</span><h1>Banners &amp; promotions</h1><p>Active, in-date banners appear to customers connected to your shop.</p></div>
+    <a class="btn btn-brand" href="{% url 'shops:ad_create' %}"><i class="fa-solid fa-plus me-1" aria-hidden="true"></i>Add Banner</a>
+  </header>
+  {% if ads %}
+    <div class="manage-ad-list">
+      {% for ad in ads %}
+        <article class="manage-ad-card">
+          <div class="manage-ad-image banner-preview">{% if ad.image %}<img src="{{ ad.image.url }}" data-fallback="{% static 'images/shop-ad-placeholder.svg' %}" alt="{{ ad.title|default:'Shop promotion banner' }}">{% else %}<img src="{% static 'images/shop-ad-placeholder.svg' %}" alt="">{% endif %}</div>
+          <div class="manage-ad-info">
+            <span class="eyebrow">{{ ad.shop.name }}</span>
+            <h2>{% if ad.title %}{{ ad.title }}{% else %}Untitled banner{% endif %}</h2>
+            {% if ad.description %}<p>{{ ad.description }}</p>{% endif %}
+            {% if ad.offer_text %}<strong class="ad-offer-text">{{ ad.offer_text }}</strong>{% endif %}
+            <div class="manage-meta"><span>Order: {{ ad.display_order }}</span><span>{{ ad.start_date }} – {{ ad.end_date }}</span><span class="status-pill {% if ad.is_active %}status-on{% else %}status-off{% endif %}">{% if ad.is_active %}Active{% else %}Inactive{% endif %}</span></div>
+            <small class="banner-created-date">Created {{ ad.created_at|date:'d M Y' }}</small>
+            <div class="manage-actions">
+              <a class="btn btn-outline-brand btn-sm" href="{% url 'shops:ad_edit' ad.pk %}">Edit</a>
+              <form method="post" action="{% url 'shops:ad_toggle' ad.pk %}">{% csrf_token %}<button class="btn btn-outline-brand btn-sm" type="submit">{% if ad.is_active %}Deactivate{% else %}Activate{% endif %}</button></form>
+              <a class="btn btn-outline-danger btn-sm" href="{% url 'shops:ad_delete' ad.pk %}">Delete</a>
+            </div>
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="empty-shop-card mt-3"><i class="fa-solid fa-panorama" aria-hidden="true"></i><p>No banners yet.</p><span>Create a promotion for customers connected to your shop.</span><a class="btn btn-brand mt-3" href="{% url 'shops:ad_create' %}">Add your first banner</a></div>
+  {% endif %}
 </div>
 {% endblock %}

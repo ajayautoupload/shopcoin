@@ -3,11 +3,12 @@
   {% if user.profile.role == 'CUSTOMER' %}
     <a class="{% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" href="{% url 'customers:dashboard' %}"><i class="fa-solid fa-house"></i><span>Home</span></a>
     <a class="{% if request.resolver_match.url_name == 'wallet' %}active{% endif %}" href="{% url 'customers:wallet' %}"><i class="fa-solid fa-wallet"></i><span>Wallet</span></a>
+    <a class="{% if request.resolver_match.url_name == 'credit' %}active{% endif %}" href="{% url 'customers:credit' %}"><i class="fa-solid fa-hand-holding-dollar"></i><span>Udhar</span></a>
     <a class="{% if request.resolver_match.url_name == 'shop' or request.resolver_match.url_name == 'product_detail' %}active{% endif %}" href="{% url 'customers:shop' %}"><i class="fa-solid fa-store"></i><span>Shop</span></a>
     <a class="{% if request.resolver_match.url_name == 'coin_rules' %}active{% endif %}" href="{% url 'customers:coin_rules' %}"><i class="fa-solid fa-coins"></i><span>Coin Rules</span></a>
     <a class="{% if request.resolver_match.url_name == 'profile' or request.resolver_match.url_name == 'edit_profile' %}active{% endif %}" href="{% url 'customers:profile' %}"><i class="fa-solid fa-user"></i><span>Profile</span></a>
   {% else %}
-    <a href="{% url 'shops:dashboard' %}"><i class="fa-solid fa-house"></i><span>Dashboard</span></a><a href="{% url 'shops:sales' %}"><i class="fa-solid fa-receipt"></i><span>Sales</span></a><a href="{% url 'shops:customers' %}"><i class="fa-solid fa-users"></i><span>Customers</span></a><a class="{% if request.resolver_match.url_name == 'coin_rules' %}active{% endif %}" href="{% url 'shops:coin_rules' %}"><i class="fa-solid fa-coins"></i><span>Coin Rules</span></a><a href="{% url 'shops:coins' %}"><i class="fa-solid fa-wallet"></i><span>Coins</span></a><a href="{% url 'shops:profile' %}"><i class="fa-solid fa-user"></i><span>Profile</span></a>
+    <a href="{% url 'shops:dashboard' %}"><i class="fa-solid fa-house"></i><span>Dashboard</span></a><a href="{% url 'shops:sales' %}"><i class="fa-solid fa-receipt"></i><span>Sales</span></a><a href="{% url 'shops:customers' %}"><i class="fa-solid fa-users"></i><span>Customers</span></a><a class="{% if request.resolver_match.url_name == 'coin_rules' %}active{% endif %}" href="{% url 'shops:coin_rules' %}"><i class="fa-solid fa-coins"></i><span>Coin Rules</span></a><a href="{% url 'shops:credits' %}"><i class="fa-solid fa-hand-holding-dollar"></i><span>Udhar</span></a><a href="{% url 'shops:profile' %}"><i class="fa-solid fa-user"></i><span>Profile</span></a>
   {% endif %}
 </nav>
 {% endif %}

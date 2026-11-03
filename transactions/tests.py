@@ -8,12 +8,114 @@ from django.urls import reverse
 
 from accounts.models import CustomerProfile, ShopkeeperProfile, UserProfile
 from shops.models import Product, Shop
-from transactions.models import Bill
+from transactions.models import Bill, Credit, CreditPayment
 from transactions.services import create_bill, set_bill_status
 from wallet.models import CoinLedger, CoinRedemption, CoinRule, CoinValue, Wallet
 from wallet.services import get_customer_coin_summary, get_coin_rule_for_balance
 
 User = get_user_model()
+
+
+class CreditFlowTests(TestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user('credit-owner', password='StrongPass!482')
+        UserProfile.objects.create(user=self.owner, role=UserProfile.Role.SHOPKEEPER)
+        ShopkeeperProfile.objects.create(user=self.owner, phone='9886500001')
+        self.shop = Shop.objects.create(owner=self.owner, name='Credit Shop', phone='9886500001', address='1 Road', city='Pune', state='Maharashtra', pincode='411001', status=Shop.Status.APPROVED)
+        self.other_owner = User.objects.create_user('credit-other-owner', password='StrongPass!482')
+        UserProfile.objects.create(user=self.other_owner, role=UserProfile.Role.SHOPKEEPER)
+        ShopkeeperProfile.objects.create(user=self.other_owner, phone='9886500003')
+        self.other_shop = Shop.objects.create(owner=self.other_owner, name='Other Credit Shop', phone='9886500003', address='2 Road', city='Pune', state='Maharashtra', pincode='411001', status=Shop.Status.APPROVED)
+        self.customer_user = User.objects.create_user('credit-customer', password='StrongPass!482', first_name='Ajay')
+        UserProfile.objects.create(user=self.customer_user, role=UserProfile.Role.CUSTOMER)
+        self.customer = CustomerProfile.objects.create(user=self.customer_user, connected_shop=self.shop, phone='9886500002')
+        self.other_customer_user = User.objects.create_user('other-credit-customer', password='StrongPass!482')
+        UserProfile.objects.create(user=self.other_customer_user, role=UserProfile.Role.CUSTOMER)
+        self.other_customer = CustomerProfile.objects.create(user=self.other_customer_user, connected_shop=self.other_shop, phone='9886500004')
+        self.wallet = Wallet.objects.create(customer=self.customer)
+        self.rule = CoinRule.objects.get(shop=self.shop, purchase_amount='1000.00')
+
+    def create_credit(self, amount='5000.00'):
+        from transactions.credit_services import create_credit
+        return create_credit(shopkeeper=self.owner, shop=self.shop, customer_id=self.customer.pk, amount=amount, description='Clothes')
+
+    def pay(self, credit, amount, reference=None):
+        from transactions.credit_services import receive_credit_payment
+        return receive_credit_payment(shopkeeper=self.owner, shop=self.shop, credit_id=credit.pk, amount=amount, payment_reference=reference or uuid4())
+
+    def test_credit_creation_awards_no_coins_and_installments_only_reward_payment(self):
+        credit = self.create_credit()
+        self.wallet.refresh_from_db()
+        self.assertEqual(credit.status, Credit.Status.UNPAID)
+        self.assertEqual(self.wallet.balance, 0)
+        first, created = self.pay(credit, '2000.00')
+        self.assertTrue(created)
+        self.assertEqual(first.coin_ledger.coin_delta, 20)
+        credit.refresh_from_db()
+        self.wallet.refresh_from_db()
+        self.assertEqual((credit.paid_amount, credit.remaining_amount, credit.status), (Decimal('2000.00'), Decimal('3000.00'), Credit.Status.PARTIAL))
+        self.assertEqual(self.wallet.balance, 20)
+        second, _ = self.pay(credit, '3000.00')
+        credit.refresh_from_db()
+        self.wallet.refresh_from_db()
+        self.assertEqual(second.coin_ledger.coin_delta, 30)
+        self.assertEqual((credit.remaining_amount, credit.status, self.wallet.balance), (Decimal('0.00'), Credit.Status.PAID, 50))
+
+    def test_duplicate_payment_reference_does_not_duplicate_payment_or_coins(self):
+        credit = self.create_credit()
+        ref = uuid4()
+        first, created = self.pay(credit, '2000.00', ref)
+        duplicate, created_again = self.pay(credit, '2000.00', ref)
+        self.wallet.refresh_from_db()
+        self.assertTrue(created)
+        self.assertFalse(created_again)
+        self.assertEqual(first.pk, duplicate.pk)
+        self.assertEqual((CreditPayment.objects.count(), self.wallet.balance), (1, 20))
+
+    def test_overpayment_and_negative_payment_are_rejected(self):
+        credit = self.create_credit()
+        from transactions.credit_services import receive_credit_payment
+        with self.assertRaises(ValidationError):
+            receive_credit_payment(shopkeeper=self.owner, shop=self.shop, credit_id=credit.pk, amount='5001', payment_reference=uuid4())
+        with self.assertRaises(ValidationError):
+            receive_credit_payment(shopkeeper=self.owner, shop=self.shop, credit_id=credit.pk, amount='-1', payment_reference=uuid4())
+
+    def test_credit_access_is_scoped_to_customer_and_shopkeeper_shop(self):
+        credit = self.create_credit()
+        self.client.force_login(self.customer_user)
+        self.assertContains(self.client.get(reverse('customers:credit')), 'Clothes')
+        self.client.force_login(self.other_customer_user)
+        self.assertNotContains(self.client.get(reverse('customers:credit')), 'Clothes')
+        self.client.force_login(self.other_owner)
+        self.assertEqual(self.client.get(reverse('shops:credit_detail', args=[credit.pk])).status_code, 404)
+
+    def test_shopkeeper_credit_list_searches_name_and_phone(self):
+        self.create_credit()
+        self.client.force_login(self.owner)
+        response = self.client.get(reverse('shops:credits'), {'q': '9886500002'})
+        self.assertContains(response, 'Ajay')
+
+    def test_payment_under_1000_awards_no_coin_ledger_entry(self):
+        credit = self.create_credit('900.00')
+        payment, _ = self.pay(credit, '900.00')
+        self.wallet.refresh_from_db()
+        self.assertIsNone(payment.coin_ledger)
+        self.assertEqual(self.wallet.balance, 0)
+
+    def test_payment_reversal_keeps_original_payment_and_offsets_awarded_coins(self):
+        from transactions.credit_services import reverse_credit_payment
+        credit = self.create_credit()
+        payment, _ = self.pay(credit, '2000.00')
+        reversal, created = reverse_credit_payment(actor=self.owner, shop=self.shop, payment_id=payment.pk)
+        again, created_again = reverse_credit_payment(actor=self.owner, shop=self.shop, payment_id=payment.pk)
+        credit.refresh_from_db()
+        self.wallet.refresh_from_db()
+        self.assertTrue(created)
+        self.assertFalse(created_again)
+        self.assertEqual(reversal.amount, Decimal('2000.00'))
+        self.assertEqual((credit.paid_amount, credit.status), (Decimal('0.00'), Credit.Status.UNPAID))
+        self.assertEqual(self.wallet.balance, 0)
+        self.assertEqual(CoinLedger.objects.filter(wallet=self.wallet).count(), 2)
 
 
 class BillFlowTests(TestCase):

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="Shop logo placeholder">
+  <rect width="120" height="120" rx="22" fill="#eaf4ef"/>
+  <path d="M27 51h66v43H27z" fill="#fff" stroke="#bfd7ca" stroke-width="4"/>
+  <path d="M23 48 32 27h56l9 21" fill="#16745c"/>
+  <path d="M23 48c0 7 11 9 16 2 4 7 14 7 19 0 5 7 15 7 20 0 5 7 16 5 19-2" fill="none" stroke="#0d5a47" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M48 70h24v24H48z" fill="#d9ebe1"/>
+  <circle cx="60" cy="59" r="4" fill="#e9b94f"/>
+</svg>

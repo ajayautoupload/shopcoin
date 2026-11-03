@@ -19,18 +19,87 @@ from uuid import uuid4
 from django.core.exceptions import ValidationError
 from wallet.models import CoinRedemption, CoinRule
 from wallet.services import get_customer_coin_summary, redeem_customer_coins
+from transactions.models import Credit, CreditPayment
+from transactions.credit_forms import CreditCreateForm, CreditPaymentForm
+from transactions.credit_services import create_credit, receive_credit_payment, reverse_credit_payment
 
 
 @shopkeeper_required
 def dashboard(request):
     shop = get_current_shopkeeper_shop(request.user)
     products = Product.objects.filter(shop__owner=request.user).order_by('-created_at')[:4]
-    ads = ShopAd.objects.filter(shop__owner=request.user).order_by('-created_at')[:3]
+    ads = ShopAd.objects.filter(shop__owner=request.user).order_by('display_order', 'start_date', '-created_at')[:3]
     today = timezone.localdate()
     today_bills = shop.bills.filter(issued_at__date=today, status=Bill.Status.COMPLETED) if shop else None
     today_sales = today_bills.aggregate(amount=Coalesce(Sum('total_amount'), Decimal('0.00'), output_field=DecimalField(max_digits=12, decimal_places=2)))['amount'] if shop else Decimal('0.00')
     coins_issued = today_bills.aggregate(coins=Coalesce(Sum('coins_earned'), Value(0)))['coins'] if shop else 0
     return render(request, 'shopkeeper/dashboard.html', {'shop': shop, 'products': products, 'ads': ads, 'today_sales': today_sales, 'coins_issued': coins_issued})
+
+
+@shopkeeper_required
+def credit_list(request):
+    shop = get_current_shopkeeper_shop(request.user)
+    if shop is None:
+        return render(request, 'shopkeeper/credits.html', {'shop': None, 'credits': Credit.objects.none()})
+    query = request.GET.get('q', '').strip()
+    status = request.GET.get('status', '')
+    credits = Credit.objects.filter(shop=shop).select_related('customer__user', 'bill').prefetch_related('payments')
+    if query:
+        credits = credits.filter(Q(customer__user__first_name__icontains=query) | Q(customer__user__last_name__icontains=query) | Q(customer__phone__icontains=query) | Q(customer__user__username__icontains=query))
+    if status in Credit.Status.values:
+        credits = credits.filter(status=status)
+    return render(request, 'shopkeeper/credits.html', {'shop': shop, 'credits': credits, 'search_query': query, 'selected_status': status, 'statuses': Credit.Status.choices})
+
+
+@shopkeeper_required
+@require_http_methods(['GET', 'POST'])
+def credit_create(request):
+    shop = get_current_shopkeeper_shop(request.user)
+    if shop is None or not is_approved_shop(shop):
+        messages.error(request, 'An approved shop is required to create credit.')
+        return redirect('shops:dashboard')
+    form = CreditCreateForm(request.POST or None, shop=shop)
+    if request.method == 'POST' and form.is_valid():
+        try:
+            credit = create_credit(shopkeeper=request.user, shop=shop, customer_id=form.cleaned_data['customer'].pk, amount=form.cleaned_data['amount'], description=form.cleaned_data['description'], due_date=form.cleaned_data['due_date'], reference=form.cleaned_data['reference'], bill_id=form.cleaned_data['bill'].pk if form.cleaned_data['bill'] else None)
+        except ValidationError as error:
+            form.add_error(None, '; '.join(error.messages))
+        else:
+            messages.success(request, 'Credit recorded. No coins were awarded at creation.')
+            return redirect('shops:credit_detail', credit_id=credit.pk)
+    return render(request, 'shopkeeper/credit_form.html', {'form': form, 'shop': shop, 'page_title': 'Create Udhar / Credit'})
+
+
+@shopkeeper_required
+@require_http_methods(['GET', 'POST'])
+def credit_detail(request, credit_id):
+    shop = get_current_shopkeeper_shop(request.user)
+    credit = get_object_or_404(Credit.objects.select_related('customer__user', 'bill').prefetch_related('payments__coin_ledger'), pk=credit_id, shop=shop)
+    form = CreditPaymentForm(request.POST or None, initial={'payment_reference': uuid4()})
+    if request.method == 'POST' and form.is_valid():
+        try:
+            payment, created = receive_credit_payment(shopkeeper=request.user, shop=shop, credit_id=credit.pk, amount=form.cleaned_data['amount'], payment_reference=form.cleaned_data['payment_reference'])
+        except ValidationError as error:
+            form.add_error(None, '; '.join(error.messages))
+        else:
+            messages.success(request, f'Payment ₹{payment.amount:.2f} recorded.' if created else 'This payment was already recorded; no duplicate coins were issued.')
+            return redirect('shops:credit_detail', credit_id=credit.pk)
+    credit.refresh_from_db()
+    return render(request, 'shopkeeper/credit_detail.html', {'credit': credit, 'form': form})
+
+
+@shopkeeper_required
+@require_POST
+def credit_payment_reverse(request, credit_id, payment_id):
+    shop = get_current_shopkeeper_shop(request.user)
+    try:
+        reverse_credit_payment(actor=request.user, shop=shop, payment_id=payment_id)
+    except ValidationError as error:
+        for message in error.messages:
+            messages.error(request, message)
+    else:
+        messages.success(request, 'Payment reversed with a retained ledger record.')
+    return redirect('shops:credit_detail', credit_id=credit_id)
 
 
 @shopkeeper_required
@@ -84,7 +153,7 @@ def product_delete(request, pk):
 
 @shopkeeper_required
 def my_ads(request):
-    ads = ShopAd.objects.filter(shop__owner=request.user).select_related('shop').order_by('-created_at')
+    ads = ShopAd.objects.filter(shop__owner=request.user).select_related('shop').order_by('display_order', 'start_date', '-created_at')
     return render(request, 'shopkeeper/ads.html', {'ads': ads})
 
 
