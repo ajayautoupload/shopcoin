@@ -21,7 +21,7 @@ from wallet.models import CoinRedemption, CoinRule
 from wallet.services import get_customer_coin_summary, redeem_customer_coins
 from transactions.models import Credit, CreditPayment
 from transactions.credit_forms import CreditCreateForm, CreditPaymentForm
-from transactions.credit_services import create_credit, receive_credit_payment, reverse_credit_payment
+from transactions.credit_services import create_credit, receive_credit_payment, reverse_bill_payment, reverse_credit_payment
 
 
 @shopkeeper_required
@@ -100,6 +100,20 @@ def credit_payment_reverse(request, credit_id, payment_id):
     else:
         messages.success(request, 'Payment reversed with a retained ledger record.')
     return redirect('shops:credit_detail', credit_id=credit_id)
+
+
+@shopkeeper_required
+@require_POST
+def bill_payment_reverse(request, bill_id, payment_id):
+    shop = get_current_shopkeeper_shop(request.user)
+    try:
+        reverse_bill_payment(actor=request.user, shop=shop, payment_id=payment_id)
+    except ValidationError as error:
+        for message in error.messages:
+            messages.error(request, message)
+    else:
+        messages.success(request, 'Bill payment reversed with an auditable credit and wallet ledger adjustment.')
+    return redirect('shops:bill_detail', bill_id=bill_id)
 
 
 @shopkeeper_required
@@ -260,7 +274,10 @@ def customers(request):
 def sales(request):
     shop = get_current_shopkeeper_shop(request.user)
     bills = Bill.objects.filter(shop=shop).select_related('customer__user').prefetch_related('items') if shop else Bill.objects.none()
-    return render(request, 'shopkeeper/sales.html', {'shop': shop, 'bills': bills})
+    payment_status = request.GET.get('status', '')
+    if payment_status in Bill.PaymentStatus.values:
+        bills = bills.filter(payment_status=payment_status)
+    return render(request, 'shopkeeper/sales.html', {'shop': shop, 'bills': bills, 'selected_status': payment_status, 'payment_statuses': Bill.PaymentStatus.choices})
 
 
 @shopkeeper_required
@@ -324,6 +341,7 @@ def create_bill_for_customer(request, customer_id):
                         shopkeeper=request.user, shop=shop, customer_id=customer.pk,
                         idempotency_key=form.cleaned_data['idempotency_key'],
                         discount=discount, items=[line.cleaned_data for line in active_forms],
+                        payment_received=form.cleaned_data.get('payment_received'),
                     )
                 except IntegrityError:
                     bill = Bill.objects.filter(
@@ -353,8 +371,12 @@ def create_bill_for_customer(request, customer_id):
 @shopkeeper_required
 def bill_detail(request, bill_id):
     shop = get_current_shopkeeper_shop(request.user)
-    bill = get_object_or_404(Bill.objects.select_related('shop', 'customer__user', 'coin_rule').prefetch_related('items'), pk=bill_id, shop=shop)
-    return render(request, 'shopkeeper/bill_detail.html', {'bill': bill, 'audience': 'shopkeeper'})
+    bill = get_object_or_404(Bill.objects.select_related('shop', 'customer__user', 'coin_rule').prefetch_related('items', 'payments__coin_ledger', 'payments__reversal', 'credits__payments__coin_ledger', 'credits__payments__reversal'), pk=bill_id, shop=shop)
+    payment_history = [{'payment': payment, 'is_credit_payment': False} for payment in bill.payments.all()]
+    for credit in bill.credits.all():
+        payment_history.extend({'payment': payment, 'is_credit_payment': True} for payment in credit.payments.all())
+    payment_history.sort(key=lambda item: item['payment'].created_at)
+    return render(request, 'shopkeeper/bill_detail.html', {'bill': bill, 'audience': 'shopkeeper', 'payment_history': payment_history})
 
 
 @shopkeeper_required

@@ -13,6 +13,11 @@ class Bill(models.Model):
         CANCELLED = 'CANCELLED', 'Cancelled'
         REFUNDED = 'REFUNDED', 'Refunded'
 
+    class PaymentStatus(models.TextChoices):
+        UNPAID = 'UNPAID', 'Unpaid'
+        PARTIAL = 'PARTIAL', 'Partially paid'
+        PAID = 'PAID', 'Paid'
+
     bill_number = models.CharField(max_length=48, unique=True, editable=False)
     idempotency_key = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     shop = models.ForeignKey('shops.Shop', on_delete=models.CASCADE, related_name='bills')
@@ -22,6 +27,8 @@ class Bill(models.Model):
     subtotal = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(0)])
     discount = models.DecimalField(max_digits=12, decimal_places=2, default=0, validators=[MinValueValidator(0)])
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(0)])
+    paid_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    payment_status = models.CharField(max_length=12, choices=PaymentStatus.choices, default=PaymentStatus.PAID, db_index=True)
     coins_earned = models.PositiveIntegerField(default=0)
     coin_value_per_coin = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
     coin_value_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -40,10 +47,15 @@ class Bill(models.Model):
         constraints = [
             models.CheckConstraint(condition=models.Q(discount__lte=models.F('subtotal')), name='bill_discount_within_subtotal'),
             models.CheckConstraint(condition=models.Q(total_amount__gte=0), name='bill_total_nonnegative'),
+            models.CheckConstraint(condition=models.Q(paid_amount__gte=0) & models.Q(paid_amount__lte=models.F('total_amount')), name='bill_paid_within_total'),
         ]
 
     def __str__(self):
         return self.bill_number
+
+    @property
+    def remaining_amount(self):
+        return self.total_amount - self.paid_amount
 
     def save(self, *args, **kwargs):
         if not self.bill_number and self.shop_id:
@@ -65,6 +77,30 @@ class BillItem(models.Model):
 
     def __str__(self):
         return f'{self.product_name} × {self.quantity}'
+
+
+class BillPayment(models.Model):
+    bill = models.ForeignKey(Bill, on_delete=models.PROTECT, related_name='payments')
+    amount = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(Decimal('0.01'))])
+    payment_reference = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    received_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='received_bill_payments')
+    coins_earned = models.PositiveIntegerField(default=0)
+    coin_value_per_coin = models.DecimalField(max_digits=9, decimal_places=2, null=True, blank=True)
+    coin_ledger = models.OneToOneField('wallet.CoinLedger', on_delete=models.SET_NULL, null=True, blank=True, related_name='bill_payment')
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ('created_at', 'pk')
+        constraints = [models.CheckConstraint(condition=models.Q(amount__gt=0), name='bill_payment_amount_positive')]
+
+
+class BillPaymentReversal(models.Model):
+    payment = models.OneToOneField(BillPayment, on_delete=models.PROTECT, related_name='reversal')
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    reference = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    reversed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='reversed_bill_payments')
+    coin_ledger = models.OneToOneField('wallet.CoinLedger', on_delete=models.SET_NULL, null=True, blank=True, related_name='bill_payment_reversal')
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
 
 class Credit(models.Model):
@@ -91,6 +127,7 @@ class Credit(models.Model):
         constraints = [
             models.CheckConstraint(condition=models.Q(original_amount__gt=0), name='credit_original_positive'),
             models.CheckConstraint(condition=models.Q(paid_amount__gte=0) & models.Q(paid_amount__lte=models.F('original_amount')), name='credit_paid_within_original'),
+            models.UniqueConstraint(fields=('bill',), condition=models.Q(bill__isnull=False), name='unique_credit_per_bill'),
         ]
 
     @property

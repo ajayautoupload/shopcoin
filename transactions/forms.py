@@ -8,6 +8,11 @@ from shops.models import Product
 
 class BillDetailsForm(forms.Form):
     idempotency_key = forms.UUIDField(widget=forms.HiddenInput)
+    payment_received = forms.DecimalField(
+        label='Payment received (₹)', required=False, initial=Decimal('0.00'), min_value=Decimal('0.00'),
+        max_digits=12, decimal_places=2,
+        widget=forms.NumberInput(attrs={'class': 'form-control', 'step': '0.01', 'min': '0', 'value': '0.00', 'id': 'id_payment_received'}),
+    )
     discount = forms.DecimalField(
         label='Bill discount', required=False, initial=Decimal('0.00'), min_value=Decimal('0.00'),
         max_digits=12, decimal_places=2,

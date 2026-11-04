@@ -9,7 +9,7 @@ from shops.access import shop_is_owned_by
 from wallet.models import CoinLedger, Wallet
 from wallet.services import calculate_coins_for_purchase, get_coin_source_summary
 
-from .models import Bill, Credit, CreditPayment, CreditPaymentReversal
+from .models import Bill, BillPayment, BillPaymentReversal, Credit, CreditPayment, CreditPaymentReversal
 
 
 @transaction.atomic
@@ -35,8 +35,8 @@ def create_credit(*, shopkeeper, shop, customer_id, amount, description='', due_
             raise ValidationError('The selected bill does not belong to this shop and customer.')
         if bill.credits.exists():
             raise ValidationError('This bill is already linked to a credit record.')
-        if bill.coins_earned:
-            raise ValidationError('A bill that already awarded coins cannot be settled again as credit.')
+        if bill.payment_status == Bill.PaymentStatus.PAID or amount != bill.remaining_amount:
+            raise ValidationError('A linked credit must equal the bill’s current outstanding amount.')
     return Credit.objects.create(
         shop=shop, customer=customer, created_by=shopkeeper, original_amount=amount,
         description=(description or '').strip(), due_date=due_date,
@@ -87,7 +87,7 @@ def receive_credit_payment(*, shopkeeper, shop, credit_id, amount, payment_refer
         wallet.balance += coins
         wallet.save(update_fields=('balance', 'updated_at'))
         ledger = CoinLedger.objects.create(
-            wallet=wallet, shop=shop, entry_type=CoinLedger.EntryType.EARN,
+            wallet=wallet, shop=shop, bill=credit.bill, entry_type=CoinLedger.EntryType.EARN,
             coin_source=CoinLedger.Source.PURCHASE,
             coin_value_per_coin=rule.coin_value_per_coin if rule else Decimal('10.00'),
             coin_delta=coins, balance_before=before, balance_after=wallet.balance,
@@ -99,6 +99,16 @@ def receive_credit_payment(*, shopkeeper, shop, credit_id, amount, payment_refer
     credit.paid_amount += amount
     credit.status = Credit.Status.PAID if credit.paid_amount == credit.original_amount else Credit.Status.PARTIAL
     credit.save(update_fields=('paid_amount', 'status', 'updated_at'))
+    if credit.bill_id:
+        bill = Bill.objects.select_for_update().get(pk=credit.bill_id)
+        bill.paid_amount += amount
+        bill.payment_status = Bill.PaymentStatus.PAID if bill.paid_amount == bill.total_amount else Bill.PaymentStatus.PARTIAL
+        bill.coins_earned += coins
+        if coins:
+            bill.coin_value_per_coin = rule.coin_value_per_coin
+            bill.coin_value_amount += Decimal(coins) * rule.coin_value_per_coin
+        bill.wallet_balance_after = wallet.balance
+        bill.save(update_fields=('paid_amount', 'payment_status', 'coins_earned', 'coin_value_per_coin', 'coin_value_amount', 'wallet_balance_after'))
     return payment, True
 
 
@@ -144,4 +154,72 @@ def reverse_credit_payment(*, actor, shop, payment_id):
     credit.paid_amount -= payment.amount
     credit.status = Credit.Status.UNPAID if credit.paid_amount == 0 else Credit.Status.PARTIAL
     credit.save(update_fields=('paid_amount', 'status', 'updated_at'))
+    if credit.bill_id:
+        bill = Bill.objects.select_for_update().get(pk=credit.bill_id)
+        bill.paid_amount -= payment.amount
+        bill.payment_status = Bill.PaymentStatus.PAID if bill.paid_amount == bill.total_amount else Bill.PaymentStatus.PARTIAL if bill.paid_amount else Bill.PaymentStatus.UNPAID
+        coins_reversed = payment.coin_ledger.coin_delta if payment.coin_ledger else 0
+        bill.coins_earned = max(0, bill.coins_earned - coins_reversed)
+        if payment.coin_ledger:
+            bill.coin_value_amount = max(Decimal('0.00'), bill.coin_value_amount - Decimal(coins_reversed) * payment.coin_ledger.coin_value_per_coin)
+        bill.wallet_balance_after = wallet.balance if wallet else bill.wallet_balance_after
+        bill.save(update_fields=('paid_amount', 'payment_status', 'coins_earned', 'coin_value_amount', 'wallet_balance_after'))
+    return reversal, True
+
+
+@transaction.atomic
+def reverse_bill_payment(*, actor, shop, payment_id):
+    if not (getattr(actor, 'is_superuser', False) or shop_is_owned_by(actor, shop)):
+        raise ValidationError('Only this shopkeeper or an administrator can reverse a payment.')
+    payment = BillPayment.objects.select_for_update().select_related('bill__customer').filter(pk=payment_id, bill__shop=shop).first()
+    if payment is None:
+        raise ValidationError('Payment not found for this shop.')
+    existing = BillPaymentReversal.objects.select_for_update().filter(payment=payment).first()
+    if existing:
+        return existing, False
+    bill = Bill.objects.select_for_update().get(pk=payment.bill_id)
+    if payment.amount > bill.paid_amount:
+        raise ValidationError('The bill balance no longer supports reversing this payment.')
+    original_ledger = payment.coin_ledger
+    wallet = None
+    if original_ledger:
+        wallet = Wallet.objects.select_for_update().get(pk=original_ledger.wallet_id)
+        source_totals = get_coin_source_summary(wallet)
+        coins = original_ledger.coin_delta
+        if coins > source_totals[CoinLedger.Source.PURCHASE]['coins']:
+            raise ValidationError('These earned coins have already been spent. Resolve the wallet balance before reversing this payment.')
+        before = wallet.balance
+        wallet.balance = before - coins
+        wallet.save(update_fields=('balance', 'updated_at'))
+    reversal = BillPaymentReversal.objects.create(payment=payment, amount=payment.amount, reversed_by=actor)
+    if original_ledger and wallet:
+        ledger = CoinLedger.objects.create(
+            wallet=wallet, shop=shop, bill=bill, entry_type=CoinLedger.EntryType.ADJUSTMENT,
+            coin_source=CoinLedger.Source.PURCHASE,
+            coin_value_per_coin=original_ledger.coin_value_per_coin,
+            coin_delta=-original_ledger.coin_delta,
+            balance_before=before, balance_after=wallet.balance,
+            transaction_reference=f'BILL-REV-{reversal.reference.hex[:30]}',
+            description=f'Reversal of bill payment {payment.payment_reference}',
+        )
+        reversal.coin_ledger = ledger
+        reversal.save(update_fields=('coin_ledger',))
+    bill.paid_amount -= payment.amount
+    bill.payment_status = Bill.PaymentStatus.PAID if bill.paid_amount == bill.total_amount else Bill.PaymentStatus.PARTIAL if bill.paid_amount else Bill.PaymentStatus.UNPAID
+    if original_ledger:
+        bill.coins_earned = max(0, bill.coins_earned - original_ledger.coin_delta)
+        bill.coin_value_amount = max(Decimal('0.00'), bill.coin_value_amount - Decimal(original_ledger.coin_delta) * original_ledger.coin_value_per_coin)
+        bill.wallet_balance_after = wallet.balance
+    bill.save(update_fields=('paid_amount', 'payment_status', 'coins_earned', 'coin_value_amount', 'wallet_balance_after'))
+    credit = Credit.objects.select_for_update().filter(bill=bill).first()
+    if credit:
+        credit.original_amount += payment.amount
+        credit.status = Credit.Status.PAID if credit.paid_amount == credit.original_amount else Credit.Status.PARTIAL if credit.paid_amount else Credit.Status.UNPAID
+        credit.save(update_fields=('original_amount', 'status', 'updated_at'))
+    else:
+        Credit.objects.create(
+            shop=bill.shop, customer=bill.customer, bill=bill, created_by=actor,
+            original_amount=payment.amount, description=f'Payment reversal for bill {bill.bill_number}',
+            reference=bill.bill_number,
+        )
     return reversal, True

@@ -68,10 +68,18 @@
         {{ form.discount }}
         {% for error in form.discount.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
       </div>
+      <div class="bill-field bill-payment-field">
+        <label class="form-label" for="id_payment_received">Payment received (₹)</label>
+        {{ form.payment_received }}
+        {% for error in form.payment_received.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
+      </div>
       <section class="bill-summary" aria-label="Bill totals">
         <div><span>Subtotal</span><strong>₹<span id="subtotal">0.00</span></strong></div>
         <div class="bill-final-total"><span>Final amount</span><strong>₹<span id="final-total">0.00</span></strong></div>
-        <p><i class="fa-solid fa-coins" aria-hidden="true"></i> Coins earned are calculated using your active coin rules.</p>
+        <div><span>Remaining amount</span><strong>₹<span id="remaining-total">0.00</span></strong></div>
+        <div><span>Payment status</span><strong id="payment-status">Unpaid</strong></div>
+        <div><span>Coins earned</span><strong><span id="coins-earned">0</span></strong></div>
+        <p><i class="fa-solid fa-coins" aria-hidden="true"></i> Coins are awarded only on payment received. Remaining balance becomes Udhar automatically.</p>
       </section>
     </div>
 
@@ -87,6 +95,7 @@
   const total = document.getElementById('id_items-TOTAL_FORMS');
   const empty = document.getElementById('empty-line').innerHTML;
   const discount = document.getElementById('id_discount');
+  const paymentReceived = document.getElementById('id_payment_received');
   const prices = {
     {% for product in shop.products.all %}"{{ product.pk }}": {{ product.effective_price }},{% endfor %}
   };
@@ -100,8 +109,14 @@
       subtotal += price * quantity;
     });
     const discountAmount = Number.parseFloat(discount.value) || 0;
+    const finalAmount = Math.max(0, subtotal - discountAmount);
+    const received = Math.max(0, Number.parseFloat(paymentReceived.value) || 0);
+    const remaining = Math.max(0, finalAmount - received);
     document.getElementById('subtotal').textContent = subtotal.toFixed(2);
-    document.getElementById('final-total').textContent = Math.max(0, subtotal - discountAmount).toFixed(2);
+    document.getElementById('final-total').textContent = finalAmount.toFixed(2);
+    document.getElementById('remaining-total').textContent = remaining.toFixed(2);
+    document.getElementById('payment-status').textContent = remaining === 0 ? 'Paid' : received === 0 ? 'Unpaid' : 'Partially paid';
+    document.getElementById('coins-earned').textContent = received >= 1000 ? String(Math.floor(received / 100)) : '0';
   }
 
   document.getElementById('add-line').addEventListener('click', () => {
@@ -126,6 +141,7 @@
 
   rows.addEventListener('input', calculateTotals);
   discount.addEventListener('input', calculateTotals);
+  paymentReceived.addEventListener('input', calculateTotals);
   rows.addEventListener('change', (event) => {
     if (!event.target.matches('.bill-product-select')) return;
     const selectedOption = event.target.selectedOptions[0];

@@ -14,14 +14,14 @@ from wallet.models import CoinLedger, CoinRedemption, Wallet
 from wallet.models import CoinRule
 from wallet.services import COINS_PER_HUNDRED, calculate_coins_for_purchase, get_coin_source_summary
 
-from .models import Bill, BillItem
+from .models import Bill, BillItem, BillPayment, Credit
 
 
 CENT = Decimal('0.01')
 
 
 @transaction.atomic
-def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, items):
+def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, items, payment_received=None):
     try:
         key = UUID(str(idempotency_key))
         discount = Decimal(discount).quantize(CENT)
@@ -105,6 +105,19 @@ def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, ite
             raise ValidationError(f'Insufficient stock for {product.name}. Only {product.stock} available.')
 
     total_amount = (subtotal - discount).quantize(CENT)
+    if payment_received is None:
+        # Preserve the previous service contract for trusted internal callers;
+        # the bill form always submits the actual received amount explicitly.
+        payment_received = total_amount
+    try:
+        payment_received = Decimal(payment_received).quantize(CENT)
+    except (ValueError, TypeError, InvalidOperation):
+        raise ValidationError('Enter a valid payment received amount.')
+    if payment_received < 0:
+        raise ValidationError('Payment received cannot be negative.')
+    if payment_received > total_amount:
+        raise ValidationError('Payment received cannot exceed the final bill amount.')
+    outstanding = (total_amount - payment_received).quantize(CENT)
     previous_shopping = Bill.objects.filter(shop=shop, customer=customer, status=Bill.Status.COMPLETED).aggregate(
         total=Coalesce(Sum('total_amount'), Decimal('0.00')),
     )['total']
@@ -118,7 +131,7 @@ def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, ite
     get_coin_source_summary(wallet)
     wallet.refresh_from_db(fields=('balance',))
     balance_before = wallet.balance
-    rule, coins_earned = calculate_coins_for_purchase(shop, total_amount, balance_before)
+    rule, coins_earned = calculate_coins_for_purchase(shop, payment_received, balance_before)
     balance_after = balance_before + coins_earned
     value_per_coin = rule.coin_value_per_coin if rule else Decimal('0.00')
     coin_value_amount = (Decimal(coins_earned) * value_per_coin).quantize(CENT) if value_per_coin is not None else Decimal('0.00')
@@ -135,6 +148,8 @@ def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, ite
         subtotal=subtotal,
         discount=discount,
         total_amount=total_amount,
+        paid_amount=payment_received,
+        payment_status=(Bill.PaymentStatus.PAID if outstanding == 0 else Bill.PaymentStatus.UNPAID if payment_received == 0 else Bill.PaymentStatus.PARTIAL),
         coins_earned=coins_earned,
         coin_value_per_coin=value_per_coin,
         coin_value_amount=coin_value_amount,
@@ -144,21 +159,35 @@ def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, ite
     )
     BillItem.objects.bulk_create([BillItem(bill=bill, **line) for line in normalized_items])
 
+    payment = None
+    if payment_received > 0:
+        payment = BillPayment.objects.create(
+            bill=bill, amount=payment_received, received_by=shopkeeper,
+            coins_earned=coins_earned, coin_value_per_coin=value_per_coin if coins_earned else None,
+        )
     if coins_earned:
         wallet.balance = balance_after
         wallet.save(update_fields=('balance', 'updated_at'))
-        CoinLedger.objects.create(
+        ledger = CoinLedger.objects.create(
             wallet=wallet,
             bill=bill,
             shop=shop,
             entry_type=CoinLedger.EntryType.EARN,
             coin_source=CoinLedger.Source.PURCHASE,
             coin_value_per_coin=value_per_coin,
-            transaction_reference=bill.bill_number,
+            transaction_reference=f'BILLPAY-{payment.payment_reference.hex[:32]}',
             coin_delta=coins_earned,
             balance_before=balance_before,
             balance_after=balance_after,
             description=f'Bill {bill.bill_number} · {shop.name}',
+        )
+        payment.coin_ledger = ledger
+        payment.save(update_fields=('coin_ledger',))
+    if outstanding > 0:
+        Credit.objects.create(
+            shop=shop, customer=customer, bill=bill, created_by=shopkeeper,
+            original_amount=outstanding, description=f'Outstanding from bill {bill.bill_number}',
+            reference=bill.bill_number,
         )
     return bill, True
 

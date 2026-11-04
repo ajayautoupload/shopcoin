@@ -27,15 +27,16 @@ This project keeps SQLite. In Render, create a persistent disk mounted at `/var/
 
 Uploaded images are user media, not static files. WhiteNoise serves static assets; it does not serve uploads. Production with `DEBUG=false` does not expose the local `/media/` directory. Render Free's filesystem is ephemeral, so locally stored shop logos, product images, banners, and profile photos can disappear after a redeploy or restart. The UI shows local placeholder images when a file is missing, but placeholders cannot recover uploaded files.
 
-For persistent uploads on Render Free, configure an S3 bucket or S3-compatible object store. This project switches media uploads to `django-storages` S3 storage only when `AWS_STORAGE_BUCKET_NAME` is set. Add these Render environment variables and provide an existing bucket plus an IAM/API identity with the required object permissions:
+For persistent uploads on Render Free, configure an S3 bucket or S3-compatible object store. This project switches media uploads to `django-storages` S3 storage only when the bucket name, `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY` are all set. If those credentials are absent, local media storage remains active. Add these Render environment variables and provide an existing bucket plus an IAM/API identity with the required object permissions:
 
 - `AWS_STORAGE_BUCKET_NAME`: bucket name.
 - `AWS_S3_REGION_NAME`: bucket region.
 - `AWS_S3_ENDPOINT_URL`: optional endpoint for an S3-compatible provider.
+- `AWS_S3_CUSTOM_DOMAIN`: optional CDN or bucket domain used for media URLs.
 - `AWS_S3_ADDRESSING_STYLE`: optional provider setting, commonly `path` when required.
-- `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`: set privately in Render, never in source control. A platform-provided AWS role/credential chain can also be used where available.
+- `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`: set privately in Render, never in source control.
 
-The bucket can remain private; Django generates signed media URLs. Do not set `AWS_STORAGE_BUCKET_NAME` until the bucket and credentials are ready. Without it, media stays on local disk and is not durable or served in production. Existing local uploads must be copied to the bucket using their stored relative paths before enabling the bucket, or those database references will point to objects that are not present yet.
+The bucket can remain private; Django generates signed media URLs by default. `AWS_S3_REGION_NAME` is recommended and `AWS_S3_ENDPOINT_URL` is used for compatible providers. Without all three required storage variables, media stays on local disk and is not durable or served in production. Existing local uploads must be copied to the bucket using their stored relative paths before enabling the bucket, or those database references will point to objects that are not present yet.
 
 Use `bash build.sh` as the build command and `bash start.sh` as the start command. The build script installs requirements and collects static files. It skips migrations on Render because the persistent disk is unavailable during the build; the start script applies migrations after the service disk is mounted, then starts `config.wsgi:application` with Gunicorn. Run a single web-service instance because a disk-backed SQLite database cannot be shared across multiple instances. The local default remains `db.sqlite3` in the project directory.
 

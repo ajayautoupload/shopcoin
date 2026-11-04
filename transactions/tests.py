@@ -8,7 +8,7 @@ from django.urls import reverse
 
 from accounts.models import CustomerProfile, ShopkeeperProfile, UserProfile
 from shops.models import Product, Shop
-from transactions.models import Bill, Credit, CreditPayment
+from transactions.models import Bill, BillPayment, Credit, CreditPayment
 from transactions.services import create_bill, set_bill_status
 from wallet.models import CoinLedger, CoinRedemption, CoinRule, CoinValue, Wallet
 from wallet.services import get_customer_coin_summary, get_coin_rule_for_balance
@@ -135,6 +135,75 @@ class BillFlowTests(TestCase):
 
     def create(self, key=None, price='1800.00', discount='0.00'):
         return create_bill(shopkeeper=self.owner, shop=self.shop, customer_id=self.customer.pk, idempotency_key=key or uuid4(), discount=discount, items=[{'product': self.product, 'product_name': 'Shirt', 'quantity': 1, 'unit_price': price}])
+
+    def create_paid_bill(self, *, total, payment_received, key=None):
+        return create_bill(
+            shopkeeper=self.owner, shop=self.shop, customer_id=self.customer.pk,
+            idempotency_key=key or uuid4(), discount='0.00', payment_received=payment_received,
+            items=[{'product': self.product, 'product_name': 'Shirt', 'quantity': 1, 'unit_price': total}],
+        )
+
+    def test_partial_bill_creates_linked_udhar_and_awards_only_received_payment_coins(self):
+        from transactions.credit_services import receive_credit_payment
+        bill, created = self.create_paid_bill(total='5000.00', payment_received='3000.00')
+        credit = bill.credits.get()
+        self.wallet.refresh_from_db()
+        self.assertTrue(created)
+        self.assertEqual((bill.total_amount, bill.paid_amount, bill.remaining_amount), (Decimal('5000.00'), Decimal('3000.00'), Decimal('2000.00')))
+        self.assertEqual((bill.payment_status, credit.original_amount, bill.coins_earned), (Bill.PaymentStatus.PARTIAL, Decimal('2000.00'), 30))
+        self.assertEqual((self.wallet.balance, bill.payments.get().coins_earned), (40, 30))
+        payment, _ = receive_credit_payment(shopkeeper=self.owner, shop=self.shop, credit_id=credit.pk, amount='2000.00', payment_reference=uuid4())
+        bill.refresh_from_db()
+        self.wallet.refresh_from_db()
+        self.assertEqual((payment.coin_ledger.coin_delta, bill.paid_amount, bill.remaining_amount), (20, Decimal('5000.00'), Decimal('0.00')))
+        self.assertEqual((bill.payment_status, bill.coins_earned, self.wallet.balance), (Bill.PaymentStatus.PAID, 50, 60))
+
+    def test_zero_and_full_payment_create_expected_credit_and_status(self):
+        unpaid, _ = self.create_paid_bill(total='5000.00', payment_received='0.00')
+        self.assertEqual((unpaid.payment_status, unpaid.coins_earned, unpaid.credits.get().original_amount), (Bill.PaymentStatus.UNPAID, 0, Decimal('5000.00')))
+        paid, _ = self.create_paid_bill(total='5000.00', payment_received='5000.00')
+        self.assertEqual((paid.payment_status, paid.coins_earned, paid.paid_amount), (Bill.PaymentStatus.PAID, 50, Decimal('5000.00')))
+        self.assertFalse(paid.credits.exists())
+
+    def test_payment_received_above_bill_or_negative_is_rejected(self):
+        for amount in ('5000.01', '-0.01'):
+            with self.subTest(amount=amount), self.assertRaises(ValidationError):
+                self.create_paid_bill(total='5000.00', payment_received=amount)
+
+    def test_bill_form_list_history_and_customer_bill_pages_render_payment_data(self):
+        payload = {
+            'idempotency_key': str(uuid4()), 'discount': '0.00', 'payment_received': '3000.00',
+            'items-TOTAL_FORMS': '1', 'items-INITIAL_FORMS': '0',
+            'items-MIN_NUM_FORMS': '1', 'items-MAX_NUM_FORMS': '40',
+            'items-0-product': '', 'items-0-product_name': 'Shirt', 'items-0-quantity': '1',
+            'items-0-unit_price': '5000.00', 'items-0-DELETE': '',
+        }
+        self.client.force_login(self.owner)
+        result = self.client.post(reverse('shops:create_bill_for_customer', args=[self.customer.pk]), payload)
+        self.assertEqual(result.status_code, 302)
+        bill = Bill.objects.get()
+        self.assertEqual(bill.payment_status, Bill.PaymentStatus.PARTIAL)
+        self.assertContains(self.client.get(reverse('shops:bills')), 'Create Bill')
+        self.assertContains(self.client.get(reverse('shops:bill_detail', args=[bill.pk])), 'Payment history')
+        self.assertContains(self.client.get(reverse('shops:sales')), 'Partially paid')
+        self.client.force_login(self.customer_user)
+        self.assertContains(self.client.get(reverse('customers:bill_detail', args=[bill.pk])), 'Outstanding:')
+
+    def test_bill_payment_reversal_creates_audit_entry_and_restores_udhar(self):
+        from transactions.credit_services import reverse_bill_payment
+        bill, _ = self.create_paid_bill(total='5000.00', payment_received='3000.00')
+        payment = bill.payments.get()
+        reversal, created = reverse_bill_payment(actor=self.owner, shop=self.shop, payment_id=payment.pk)
+        duplicate, created_again = reverse_bill_payment(actor=self.owner, shop=self.shop, payment_id=payment.pk)
+        bill.refresh_from_db()
+        credit = bill.credits.get()
+        self.wallet.refresh_from_db()
+        self.assertTrue(created)
+        self.assertFalse(created_again)
+        self.assertEqual(reversal.amount, Decimal('3000.00'))
+        self.assertEqual((bill.paid_amount, bill.remaining_amount, bill.payment_status), (Decimal('0.00'), Decimal('5000.00'), Bill.PaymentStatus.UNPAID))
+        self.assertEqual((credit.original_amount, credit.paid_amount, credit.status), (Decimal('5000.00'), Decimal('0.00'), Credit.Status.UNPAID))
+        self.assertEqual(self.wallet.balance, 10)
 
     def reset_wallet(self):
         CoinLedger.objects.filter(wallet=self.wallet).update(is_reversed=True)

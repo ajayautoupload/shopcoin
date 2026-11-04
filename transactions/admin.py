@@ -1,9 +1,9 @@
 from django.contrib import admin
 from django.contrib import messages
 from django.core.exceptions import ValidationError
-from .models import Bill, BillItem, Credit, CreditPayment, CreditPaymentReversal
+from .models import Bill, BillItem, BillPayment, BillPaymentReversal, Credit, CreditPayment, CreditPaymentReversal
 from .services import set_bill_status
-from .credit_services import reverse_credit_payment
+from .credit_services import reverse_bill_payment, reverse_credit_payment
 
 class BillItemInline(admin.TabularInline):
     model = BillItem
@@ -47,6 +47,49 @@ def reverse_credit_payments(modeladmin, request, queryset):
             reversed_count += int(created)
     if reversed_count:
         messages.success(request, f'{reversed_count} credit payment(s) reversed.')
+
+
+@admin.action(description='Reverse selected bill payment(s) with audit entries')
+def reverse_bill_payments(modeladmin, request, queryset):
+    reversed_count = 0
+    for payment in queryset.select_related('bill__shop'):
+        try:
+            _, created = reverse_bill_payment(actor=request.user, shop=payment.bill.shop, payment_id=payment.pk)
+        except ValidationError as error:
+            messages.error(request, f'Payment {payment.payment_reference}: {" ".join(error.messages)}')
+        else:
+            reversed_count += int(created)
+    if reversed_count:
+        messages.success(request, f'{reversed_count} bill payment(s) reversed.')
+
+
+@admin.register(BillPayment)
+class BillPaymentAdmin(admin.ModelAdmin):
+    list_display = ('payment_reference', 'bill', 'amount', 'coins_earned', 'received_by', 'created_at')
+    search_fields = ('payment_reference', 'bill__bill_number', 'bill__customer__phone')
+    readonly_fields = ('payment_reference', 'bill', 'amount', 'received_by', 'coins_earned', 'coin_value_per_coin', 'coin_ledger', 'created_at')
+    actions = (reverse_bill_payments,)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(BillPaymentReversal)
+class BillPaymentReversalAdmin(admin.ModelAdmin):
+    list_display = ('reference', 'payment', 'amount', 'reversed_by', 'created_at')
+    readonly_fields = ('payment', 'amount', 'reference', 'reversed_by', 'coin_ledger', 'created_at')
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(CreditPayment)

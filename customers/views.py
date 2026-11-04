@@ -97,8 +97,12 @@ def shopping_history(request):
 
 @customer_required
 def bill_detail(request, bill_id):
-    bill = get_object_or_404(Bill.objects.select_related('shop', 'coin_rule').prefetch_related('items'), pk=bill_id, customer=request.user.customer_profile)
-    return render(request, 'customer/bill_detail.html', {'bill': bill})
+    bill = get_object_or_404(Bill.objects.select_related('shop', 'coin_rule').prefetch_related('items', 'payments__coin_ledger', 'payments__reversal', 'credits__payments__coin_ledger', 'credits__payments__reversal'), pk=bill_id, customer=request.user.customer_profile)
+    payment_history = [{'payment': payment, 'is_credit_payment': False} for payment in bill.payments.all()]
+    for credit in bill.credits.all():
+        payment_history.extend({'payment': payment, 'is_credit_payment': True} for payment in credit.payments.all())
+    payment_history.sort(key=lambda item: item['payment'].created_at)
+    return render(request, 'customer/bill_detail.html', {'bill': bill, 'payment_history': payment_history})
 
 
 @customer_required
