@@ -5,7 +5,7 @@
   <a class="back-link" href="{% url 'shops:bills' %}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Customers</a>
   <header class="page-heading mt-3 bill-heading">
     <span class="eyebrow">{{ shop.name }}</span>
-    <h1>Create bill for {{ customer.user.get_full_name|default:customer.user.username }}</h1>
+    <h1>Create bill for {{ customer.user.get_full_name|default:'Customer' }}</h1>
     <p>{{ customer.phone }} · Bill number and date are generated when submitted.</p>
   </header>
 

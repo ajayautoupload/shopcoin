@@ -21,5 +21,6 @@
   <script src="{% static 'js/app.js' %}"></script>
   <script src="{% static 'js/promo-slider.js' %}" defer></script>
   {% if user.is_authenticated and not user.is_superuser and user.profile.role == 'CUSTOMER' %}<script src="{% static 'js/website_engagement.js' %}" defer data-start-url="{% url 'customers:engagement_start' %}" data-heartbeat-url="{% url 'customers:engagement_heartbeat' %}"></script>{% endif %}
+  {% block extra_js %}{% endblock %}
 </body>
 </html>

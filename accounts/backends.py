@@ -1,11 +1,11 @@
 from django.contrib.auth import get_user_model
 from django.contrib.auth.backends import ModelBackend
 
-from .models import CustomerProfile, UserProfile
+from .models import CustomerProfile, ShopkeeperProfile, UserProfile
 
 
 class MobileOrUsernameBackend(ModelBackend):
-    """Authenticate customers by mobile and shopkeepers by username."""
+    """Authenticate customers and shopkeepers by mobile, with username compatibility."""
 
     def authenticate_customer_mobile(self, mobile, password):
         """Customer-only credential check used by the dedicated customer login."""
@@ -29,6 +29,14 @@ class MobileOrUsernameBackend(ModelBackend):
         customer = self.authenticate_customer_mobile(identifier, password)
         if customer:
             return customer
+        shopkeeper = ShopkeeperProfile.objects.select_related('user', 'user__profile').filter(
+            phone=identifier, user__is_active=True,
+            user__profile__role=UserProfile.Role.SHOPKEEPER,
+            user__profile__is_deleted=False,
+        ).first()
+        if shopkeeper and shopkeeper.user.check_password(password) and self.user_can_authenticate(shopkeeper.user):
+            shopkeeper.user.backend = 'accounts.backends.MobileOrUsernameBackend'
+            return shopkeeper.user
         user = User.objects.filter(**{User.USERNAME_FIELD: identifier}).first()
         if user and user.check_password(password) and self.user_can_authenticate(user):
             profile = getattr(user, 'profile', None)

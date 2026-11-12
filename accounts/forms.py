@@ -3,6 +3,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth import get_user_model
 from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
 from django.db import transaction
+from uuid import uuid4
 from .models import CustomerProfile, ShopkeeperProfile, UserProfile
 
 User = get_user_model()
@@ -28,6 +29,10 @@ class RegistrationForm(UserCreationForm):
         if role != UserProfile.Role.SHOPKEEPER:
             raise ValueError('Customer accounts must be created by an approved shopkeeper.')
         user = super().save(commit=False)
+        # Django still needs an internal username for authentication, but public
+        # shopkeeper registration does not ask the person to choose one.
+        if not user.username:
+            user.username = f'shopkeeper_{uuid4().hex}'
         user.email = self.cleaned_data['email']
         user.first_name = self.cleaned_data['first_name']
         user.last_name = self.cleaned_data.get('last_name', '')
@@ -43,7 +48,7 @@ class ShopkeeperRegistrationForm(RegistrationForm):
     business_name = forms.CharField(max_length=160, required=False)
 
     class Meta(RegistrationForm.Meta):
-        fields = ('username', 'first_name', 'last_name', 'email', 'phone', 'business_name', 'password1', 'password2')
+        fields = ('first_name', 'last_name', 'email', 'phone', 'business_name', 'password1', 'password2')
 
     @transaction.atomic
     def save(self, role=UserProfile.Role.SHOPKEEPER, commit=True):
@@ -56,7 +61,7 @@ class ShopkeeperRegistrationForm(RegistrationForm):
 class LoginForm(AuthenticationForm):
     username = forms.CharField(
         label='Mobile number',
-        help_text='Customers use their registered mobile number. Shopkeepers use their username.',
+        help_text='Use your registered mobile number. Existing accounts can also use their username.',
         widget=forms.TextInput(attrs={'autocomplete': 'username', 'inputmode': 'tel'}),
     )
 
