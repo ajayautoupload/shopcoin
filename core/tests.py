@@ -38,6 +38,21 @@ class DemoSeedCommandTests(TestCase):
         self.assertTrue(ShopAd.objects.filter(shop=shop, image__startswith='shop_ads/').exists())
 
 
+class LocalMediaServingTests(TestCase):
+    def test_uploaded_media_url_works_when_debug_is_disabled(self):
+        with TemporaryDirectory(dir=Path(__file__).resolve().parents[1]) as media_root, override_settings(
+            MEDIA_ROOT=media_root, MEDIA_URL='/media/', DEBUG=False,
+        ):
+            image_path = Path(media_root, 'products', 'uploaded-image.txt')
+            image_path.parent.mkdir(parents=True)
+            image_path.write_bytes(b'uploaded media content')
+            response = self.client.get('/media/products/uploaded-image.txt')
+            body = b''.join(response.streaming_content) if response.streaming else response.content
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(body, b'uploaded media content')
+
+
 class AuthorizationPageMatrixTests(TestCase):
     def setUp(self):
         self.shopkeeper = User.objects.create_user('matrix-shopkeeper', password='StrongPass!482')

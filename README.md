@@ -25,7 +25,7 @@ This project keeps SQLite. In Render, create a persistent disk mounted at `/var/
 - `DJANGO_ALLOWED_HOSTS`: optional when using the Render-provided hostname; set your hostnames if using a custom domain.
 - `DJANGO_CSRF_TRUSTED_ORIGINS`: optional comma-separated HTTPS origins for custom domains.
 
-Uploaded images are user media, not static files. WhiteNoise serves static assets; it does not serve uploads. Production with `DEBUG=false` does not expose the local `/media/` directory. Render Free's filesystem is ephemeral, so locally stored shop logos, product images, banners, and profile photos can disappear after a redeploy or restart. The UI shows local placeholder images when a file is missing, but placeholders cannot recover uploaded files.
+Uploaded images are user media, not static files. WhiteNoise serves static assets; it does not serve uploads. When local filesystem media is selected, Django serves its `/media/` URLs in both debug and production mode so uploaded images can load. Render Free's filesystem is still ephemeral, so these local uploads can disappear after a redeploy or restart. The UI shows placeholders when a file is missing, but placeholders cannot recover uploaded files.
 
 For persistent uploads on Render Free, configure an S3 bucket or S3-compatible object store. This project switches media uploads to `django-storages` S3 storage only when the bucket name, `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY` are all set. If those credentials are absent, local media storage remains active. Add these Render environment variables and provide an existing bucket plus an IAM/API identity with the required object permissions:
 

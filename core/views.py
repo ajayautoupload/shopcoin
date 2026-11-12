@@ -1,7 +1,9 @@
+from django.conf import settings
 from django.contrib import messages
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
+from django.views.static import serve
 from urllib.parse import urlencode
 
 
@@ -22,3 +24,8 @@ def csrf_failure(request, reason=''):
 
 def home(request):
     return render(request, 'core/home.html')
+
+
+def serve_local_media(request, path):
+    """Serve uploaded files when the configured media backend is local disk."""
+    return serve(request, path, document_root=settings.MEDIA_ROOT)
