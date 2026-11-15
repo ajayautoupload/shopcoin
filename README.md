@@ -13,15 +13,17 @@ venv\Scripts\python.exe manage.py runserver
 
 Install dependencies in that environment with `venv\Scripts\python.exe -m pip install -r requirements.txt` when setting up a new machine.
 
-Optional environment settings are `DJANGO_SECRET_KEY`, `DJANGO_DEBUG`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_DB_PATH`, and `DJANGO_MEDIA_ROOT`. Local development uses SQLite and filesystem uploads by default. When `DEBUG=true`, Django serves local uploaded media from `MEDIA_URL` (`/media/` by default).
+Optional environment settings are `DJANGO_SECRET_KEY`, `DJANGO_DEBUG`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_DB_PATH`, `DATABASE_URL`, `DB_CONN_MAX_AGE`, and `DJANGO_MEDIA_ROOT`. Copy `.env.example` to `.env` for local configuration. If `DATABASE_URL` is set to a PostgreSQL URL, Django connects to PostgreSQL; otherwise local development keeps using SQLite. Do not commit `.env` or expose its database credentials. When `DEBUG=true`, Django serves local uploaded media from `MEDIA_URL` (`/media/` by default).
 
 ## Deploy on Render
 
-This project keeps SQLite. In Render, create a persistent disk mounted at `/var/data` for the database; without it, database changes are lost when the service is redeployed. Render Free does not provide a persistent disk, so SQLite data on the free filesystem is temporary. Set these environment variables in the Render service:
+The app uses SQLite by default, or PostgreSQL when `DATABASE_URL` is configured. For Neon, set `DATABASE_URL` in the Render service to the pooled connection string from the correct Neon project/branch. Keep the direct/unpooled URL in `DATABASE_URL_UNPOOLED` only if an administrative script needs it; Django uses the pooled URL for normal app traffic. The database URL is a password-bearing secret: set it in Render's private environment settings, not in source control. The PostgreSQL driver is installed from `requirements.txt`, and production PostgreSQL connections require SSL. Without `DATABASE_URL`, Render continues to use SQLite; a persistent disk is needed for that fallback, and Render Free does not provide one.
 
 - `DJANGO_SECRET_KEY`: generate a private, strong value in Render.
 - `DJANGO_DEBUG`: `false`.
-- `DJANGO_DB_PATH`: `/var/data/db.sqlite3`.
+- `DATABASE_URL`: pooled Neon PostgreSQL connection URL (recommended for the live service).
+- `DATABASE_URL_UNPOOLED`: optional direct Neon URL for one-off administration; not read by Django's default database setting.
+- `DJANGO_DB_PATH`: `/var/data/db.sqlite3` only if you intentionally keep the SQLite fallback.
 - `DJANGO_ALLOWED_HOSTS`: optional when using the Render-provided hostname; set your hostnames if using a custom domain.
 - `DJANGO_CSRF_TRUSTED_ORIGINS`: optional comma-separated HTTPS origins for custom domains.
 

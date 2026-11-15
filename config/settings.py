@@ -12,9 +12,26 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 
 from pathlib import Path
 import os
+from urllib.parse import parse_qs, unquote, urlparse
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load private local settings without adding a runtime dependency. Existing
+# process/hosting environment variables always take precedence over .env.
+local_env_file = BASE_DIR / '.env'
+if local_env_file.is_file():
+    for env_line in local_env_file.read_text(encoding='utf-8').splitlines():
+        stripped_line = env_line.strip()
+        if not stripped_line or stripped_line.startswith('#') or '=' not in stripped_line:
+            continue
+        env_name, env_value = stripped_line.split('=', 1)
+        env_name = env_name.strip()
+        env_value = env_value.strip()
+        if len(env_value) >= 2 and env_value[0] == env_value[-1] and env_value[0] in ('"', "'"):
+            env_value = env_value[1:-1]
+        if env_name and env_name not in os.environ:
+            os.environ[env_name] = env_value
 
 
 # Quick-start development settings - unsuitable for production
@@ -118,12 +135,39 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': Path(os.environ.get('DJANGO_DB_PATH', BASE_DIR / 'db.sqlite3')),
+database_url = os.environ.get('DATABASE_URL', '').strip()
+if database_url:
+    parsed_database_url = urlparse(database_url)
+    if parsed_database_url.scheme not in ('postgres', 'postgresql'):
+        raise RuntimeError('DATABASE_URL must be a PostgreSQL connection URL.')
+    database_options = {
+        key: values[-1]
+        for key, values in parse_qs(parsed_database_url.query).items()
     }
-}
+    if not DEBUG:
+        database_options.setdefault('sslmode', 'require')
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': unquote(parsed_database_url.path.lstrip('/')),
+            'USER': unquote(parsed_database_url.username or ''),
+            'PASSWORD': unquote(parsed_database_url.password or ''),
+            'HOST': parsed_database_url.hostname or '',
+            'PORT': str(parsed_database_url.port or 5432),
+            'OPTIONS': database_options,
+            'CONN_MAX_AGE': int(os.environ.get('DB_CONN_MAX_AGE', '600')),
+            'CONN_HEALTH_CHECKS': True,
+            'DISABLE_SERVER_SIDE_CURSORS': '-pooler.' in (parsed_database_url.hostname or ''),
+        }
+    }
+else:
+    # Preserve the existing local SQLite setup until a DATABASE_URL is set.
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': Path(os.environ.get('DJANGO_DB_PATH', BASE_DIR / 'db.sqlite3')),
+        }
+    }
 
 
 # Password validation
