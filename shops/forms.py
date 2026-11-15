@@ -24,7 +24,7 @@ class CustomerLookupForm(forms.Form):
 class ProductForm(forms.ModelForm):
     class Meta:
         model = Product
-        fields = ('name', 'image', 'price', 'discount_price', 'category', 'sizes', 'colors', 'description', 'stock', 'is_new', 'is_active')
+        fields = ('name', 'image', 'price', 'discount_price', 'category', 'sizes', 'colors', 'description', 'is_new', 'is_active')
         widgets = {'description': forms.Textarea(attrs={'rows': 4}), 'price': forms.NumberInput(attrs={'step': '0.01', 'min': '0'}), 'discount_price': forms.NumberInput(attrs={'step': '0.01', 'min': '0'})}
 
 

@@ -14,12 +14,14 @@ class AccountFlowTests(TestCase):
 
     def test_shopkeeper_registration_creates_role_and_profile(self):
         response = self.client.post(reverse('accounts:register_shopkeeper'), {
-            'username': 'shopowner', 'first_name': 'Ravi', 'email': 'ravi@example.com',
+            'first_name': 'Ravi', 'email': '',
             'phone': '9876543210', 'business_name': 'Ravi Stores',
             'password1': 'StrongPass!482', 'password2': 'StrongPass!482',
         })
         self.assertRedirects(response, reverse('shops:dashboard'))
-        user = User.objects.get(username='shopowner')
+        user = User.objects.get(email='')
+        self.assertTrue(user.username.startswith('shopkeeper_'))
+        self.assertEqual(user.email, '')
         self.assertEqual(user.profile.role, UserProfile.Role.SHOPKEEPER)
         self.assertEqual(user.shopkeeper_profile.phone, '9876543210')
 
@@ -39,6 +41,21 @@ class AccountFlowTests(TestCase):
         self.assertEqual(response.status_code, 302)
         routed = self.client.get(response.url)
         self.assertRedirects(routed, reverse('shops:dashboard'))
+        self.client.logout()
+        response = self.client.post(reverse('accounts:login'), {'username': '9123456789', 'password': 'StrongPass!482'})
+        self.assertEqual(response.status_code, 302)
+        self.assertRedirects(self.client.get(response.url), reverse('shops:dashboard'))
+
+    def test_registration_header_hides_admin_controls_even_for_admin(self):
+        admin = User.objects.create_superuser('admin-test', 'admin@example.com', 'StrongPass!482')
+        self.client.force_login(admin)
+        response = self.client.get(reverse('accounts:register_shopkeeper'))
+        self.assertNotContains(response, '>Admin</a>', html=False)
+        self.assertNotContains(response, 'Sign out')
+
+    def test_customer_login_has_no_shopkeeper_login_link(self):
+        response = self.client.get(reverse('customers:login'))
+        self.assertNotContains(response, 'Shopkeeper login')
 
     def test_invalid_login_does_not_authenticate(self):
         response = self.client.post(reverse('accounts:login'), {'username': 'nobody', 'password': 'wrong'})
@@ -56,7 +73,7 @@ class AccountFlowTests(TestCase):
         self.client.force_login(customer)
         response = self.client.get(reverse('accounts:login'))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Shopkeepers use their username')
+        self.assertContains(response, 'Existing accounts can also use their username')
 
     def test_sessions_using_the_original_django_backend_remain_valid(self):
         user = User.objects.create_user('legacy-session-shopkeeper', password='StrongPass!482')

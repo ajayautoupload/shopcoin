@@ -10,7 +10,7 @@ User = get_user_model()
 
 
 class RegistrationForm(UserCreationForm):
-    email = forms.EmailField()
+    email = forms.EmailField(required=False)
     first_name = forms.CharField(max_length=150)
     last_name = forms.CharField(max_length=150, required=False)
 
@@ -19,7 +19,9 @@ class RegistrationForm(UserCreationForm):
         fields = ('username', 'first_name', 'last_name', 'email', 'password1', 'password2')
 
     def clean_email(self):
-        email = self.cleaned_data['email'].strip().lower()
+        email = (self.cleaned_data.get('email') or '').strip().lower()
+        if not email:
+            return ''
         if User.objects.filter(email__iexact=email).exists():
             raise forms.ValidationError('An account with this email already exists.')
         return email

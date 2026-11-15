@@ -257,14 +257,14 @@ class ShopkeeperCatalogueManagementTests(TestCase):
         return Shop.objects.create(owner=owner, name=name, slug=slug, phone='1111111111', address='10 Demo Street', city='Samplepur', state='Demostate', pincode='000000', status=Shop.Status.APPROVED)
 
     def product_data(self, **extra):
-        return {'name': 'Cotton Shirt', 'price': '999.00', 'discount_price': '799.00', 'category': 'Shirts', 'sizes': 'M, L, XL', 'colors': 'Blue', 'description': 'Soft cotton shirt.', 'stock': '25', 'is_new': 'on', 'is_active': 'on', **extra}
+        return {'name': 'Cotton Shirt', 'price': '999.00', 'discount_price': '799.00', 'category': 'Shirts', 'sizes': 'M, L, XL', 'colors': 'Blue', 'description': 'Soft cotton shirt.', 'is_new': 'on', 'is_active': 'on', **extra}
 
     def test_shopkeeper_creates_product_for_own_shop_even_if_shop_field_is_spoofed(self):
         response = self.client.post(reverse('shops:product_create'), self.product_data(shop=self.other_shop.pk))
         self.assertRedirects(response, reverse('shops:products'))
         product = Product.objects.get(name='Cotton Shirt')
         self.assertEqual(product.shop, self.shop)
-        self.assertEqual(product.stock, 25)
+        self.assertEqual(product.stock, 0)
         self.assertTrue(product.is_active)
         self.assertTrue(product.is_new)
 

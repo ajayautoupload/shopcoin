@@ -270,13 +270,13 @@ class BillFlowTests(TestCase):
         with self.assertRaisesMessage(ValidationError, 'Add at least one product to the bill'):
             create_bill(shopkeeper=self.owner, shop=self.shop, customer_id=self.customer.pk, idempotency_key=uuid4(), discount='0', items=[])
 
-    def test_catalog_stock_is_decremented_atomically_and_insufficient_stock_is_rejected(self):
-        self.product.stock = 3
+    def test_bills_ignore_stock_and_leave_legacy_stock_value_unchanged(self):
+        self.product.stock = 0
         self.product.save(update_fields=('stock',))
         bill, _ = create_bill(
             shopkeeper=self.owner, shop=self.shop, customer_id=self.customer.pk,
             idempotency_key=uuid4(), discount='0', items=[
-                {'product': self.product, 'product_name': 'Shirt', 'quantity': 2, 'unit_price': '80'},
+                {'product': self.product, 'product_name': 'Shirt', 'quantity': 10, 'unit_price': '80'},
                 {'product': self.product, 'product_name': 'Shirt', 'quantity': 1, 'unit_price': '80'},
             ],
         )
@@ -285,11 +285,15 @@ class BillFlowTests(TestCase):
         self.assertEqual((bill.coins_earned, self.product.stock), (0, 0))
         bills_before = Bill.objects.count()
         balance_before = self.wallet.balance
-        with self.assertRaisesMessage(ValidationError, 'Insufficient stock for Shirt. Only 0 available.'):
-            self.create(price='80.00')
+        another_bill, _ = create_bill(
+            shopkeeper=self.owner, shop=self.shop, customer_id=self.customer.pk,
+            idempotency_key=uuid4(), discount='0',
+            items=[{'product': self.product, 'product_name': 'Shirt', 'quantity': 50, 'unit_price': '80'}],
+        )
         self.product.refresh_from_db()
         self.wallet.refresh_from_db()
-        self.assertEqual((Bill.objects.count(), self.product.stock, self.wallet.balance), (bills_before, 0, balance_before))
+        self.assertEqual((Bill.objects.count(), self.product.stock, self.wallet.balance), (bills_before + 1, 0, balance_before + 40))
+        self.assertEqual(another_bill.total_amount, Decimal('4000.00'))
 
     def test_bill_reward_snapshots_use_the_coin_balance_slab_at_issue_time(self):
         self.reset_wallet()

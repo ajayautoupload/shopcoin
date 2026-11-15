@@ -9,6 +9,9 @@
         <a class="nav-link fw-semibold" href="{% url 'accounts:login' %}">Shopkeeper Login</a>
         <a class="btn btn-brand btn-sm" href="{% url 'customers:login' %}">Customer Login</a>
       </div>
+    {% elif request.resolver_match.url_name == 'register_shopkeeper' %}
+      <a class="navbar-brand fw-bold text-brand" href="{% url 'core:home' %}"><span class="brand-mark"><i class="fa-solid fa-coins"></i></span> Shop Coin</a>
+      <a class="nav-link fw-semibold ms-auto" href="{% url 'customers:login' %}">Customer login</a>
     {% elif user.is_authenticated and not user.is_superuser and user.profile.role == 'CUSTOMER' %}
       {% with connected_shop=user.customer_profile.connected_shop %}
         <a class="navbar-brand fw-bold text-brand shop-header-name" href="{% url 'customers:dashboard' %}">
@@ -54,5 +57,14 @@
         <div class="d-flex align-items-center gap-2"><a class="nav-link" href="{% url 'customers:login' %}">Customer login</a><a class="btn btn-brand btn-sm" href="{% url 'accounts:register_shopkeeper' %}">Register your shop</a></div>
       {% endif %}
     {% endif %}
+    <details class="site-preferences ms-auto ms-lg-3">
+      <summary aria-label="Language and theme settings"><i class="fa-solid fa-sliders"></i><span class="d-none d-sm-inline">Language &amp; theme</span></summary>
+      <div class="site-preferences-panel">
+        <strong>Language</strong>
+        <div class="preference-options"><button type="button" data-language-choice="en">English</button><button type="button" data-language-choice="hi">हिन्दी</button></div>
+        <strong>Theme</strong>
+        <div class="preference-options"><button type="button" data-theme-choice="light">Light</button><button type="button" data-theme-choice="dark">Dark</button></div>
+      </div>
+    </details>
   </div>
 </nav>

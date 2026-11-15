@@ -62,7 +62,7 @@ Each ₹100 of a bill's final amount after discount earns one coin; fractional c
 - 100–499 coins: ₹12 per coin
 - 500 or more coins: ₹15 per coin
 
-Bills retain their issue-time coin-value snapshot. Shopkeepers can redeem a customer's full active balance after recording the reward provided; the wallet ledger and redemption history are retained. Catalog stock is reduced atomically when catalog products are included in bills.
+Bills retain their issue-time coin-value snapshot. Shopkeepers can redeem a customer's full active balance after recording the reward provided; the wallet ledger and redemption history are retained. Product stock no longer gates or changes billing. The legacy database stock column remains in place to preserve existing records, but it is hidden from product forms and unused by bill creation.
 
 ## Checks and tests
 

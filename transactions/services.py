@@ -53,7 +53,7 @@ def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, ite
         raise ValidationError('This customer is not active and connected to your shop.')
 
     normalized_items = []
-    catalog_quantities = {}
+    catalog_product_ids = set()
     subtotal = Decimal('0.00')
     for line in items:
         product = line.get('product')
@@ -74,7 +74,7 @@ def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, ite
         if quantity < 1 or unit_price < 0:
             raise ValidationError('Quantity must be at least 1 and price cannot be negative.')
         if product:
-            catalog_quantities[product.pk] = catalog_quantities.get(product.pk, 0) + quantity
+            catalog_product_ids.add(product.pk)
         line_total = (unit_price * quantity).quantize(CENT)
         subtotal += line_total
         normalized_items.append({
@@ -91,18 +91,13 @@ def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, ite
     if discount > subtotal:
         raise ValidationError('Discount cannot be greater than the subtotal.')
 
-    locked_products = {
-        product.pk: product
-        for product in Product.objects.select_for_update().filter(
-            pk__in=catalog_quantities, shop=shop, is_active=True,
-        ).order_by('pk')
-    }
-    if set(locked_products) != set(catalog_quantities):
+    # Keep catalog ownership/active checks protected against concurrent edits;
+    # inventory counts no longer affect bill acceptance or product records.
+    locked_products = set(Product.objects.select_for_update().filter(
+        pk__in=catalog_product_ids, shop=shop, is_active=True,
+    ).values_list('pk', flat=True))
+    if locked_products != catalog_product_ids:
         raise ValidationError('A selected product is no longer available in your shop.')
-    for product_id, quantity in catalog_quantities.items():
-        product = locked_products[product_id]
-        if product.stock < quantity:
-            raise ValidationError(f'Insufficient stock for {product.name}. Only {product.stock} available.')
 
     total_amount = (subtotal - discount).quantize(CENT)
     if payment_received is None:
@@ -122,10 +117,6 @@ def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, ite
         total=Coalesce(Sum('total_amount'), Decimal('0.00')),
     )['total']
     cumulative_shopping_after = (previous_shopping + total_amount).quantize(CENT)
-    for product_id, quantity in catalog_quantities.items():
-        product = locked_products[product_id]
-        product.stock -= quantity
-        product.save(update_fields=('stock', 'updated_at'))
     wallet, _ = Wallet.objects.get_or_create(customer=customer)
     wallet = Wallet.objects.select_for_update().get(pk=wallet.pk)
     get_coin_source_summary(wallet)
