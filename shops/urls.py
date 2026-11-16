@@ -32,4 +32,5 @@ urlpatterns = [
     path('shopkeeper/bills/<int:bill_id>/payments/<int:payment_id>/reverse/', views.bill_payment_reverse, name='bill_payment_reverse'),
     path('shopkeeper/customers/<int:customer_id>/', views.customer_detail, name='customer_detail'),
     path('shopkeeper/customers/<int:customer_id>/clear-coins/', views.clear_customer_coins, name='clear_customer_coins'),
+    path('shopkeeper/redemptions/<int:request_id>/confirm/', views.finalize_redemption, name='finalize_redemption'),
 ]

@@ -110,6 +110,10 @@ class CoinRedemption(models.Model):
     cumulative_shopping = models.DecimalField(max_digits=12, decimal_places=2)
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.COMPLETED)
     redeemed_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    source_bill = models.ForeignKey('transactions.Bill', on_delete=models.SET_NULL, null=True, blank=True, related_name='redemption_requests')
+    applied_bill = models.ForeignKey('transactions.Bill', on_delete=models.SET_NULL, null=True, blank=True, related_name='applied_redemptions')
+    customer_confirmed_at = models.DateTimeField(null=True, blank=True)
+    shopkeeper_confirmed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ('-redeemed_at', '-pk')
@@ -117,6 +121,38 @@ class CoinRedemption(models.Model):
 
     def __str__(self):
         return f'{self.coins_redeemed} coins redeemed · {self.customer}'
+
+
+class CoinRedemptionRequest(models.Model):
+    class Status(models.TextChoices):
+        PENDING_CUSTOMER = 'PENDING_CUSTOMER', 'Pending customer confirmation'
+        PENDING_SHOPKEEPER = 'PENDING_SHOPKEEPER', 'Pending shopkeeper confirmation'
+        COMPLETED = 'COMPLETED', 'Completed'
+        REJECTED = 'REJECTED', 'Rejected'
+        EXPIRED = 'EXPIRED', 'Expired'
+
+    reference_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    idempotency_key = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    customer = models.ForeignKey(CustomerProfile, on_delete=models.CASCADE, related_name='redemption_requests')
+    shop = models.ForeignKey('shops.Shop', on_delete=models.CASCADE, related_name='redemption_requests')
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='created_redemption_requests')
+    source_bill = models.ForeignKey('transactions.Bill', on_delete=models.SET_NULL, null=True, blank=True, related_name='coin_redemption_requests')
+    redemption = models.OneToOneField(CoinRedemption, on_delete=models.SET_NULL, null=True, blank=True, related_name='confirmation_request')
+    coins_requested = models.PositiveIntegerField()
+    reward_value = models.DecimalField(max_digits=12, decimal_places=2)
+    reward_description = models.TextField(blank=True)
+    status = models.CharField(max_length=24, choices=Status.choices, default=Status.PENDING_CUSTOMER, db_index=True)
+    customer_confirmed_at = models.DateTimeField(null=True, blank=True)
+    shopkeeper_confirmed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    expires_at = models.DateTimeField()
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ('-created_at', '-pk')
+
+    def __str__(self):
+        return f'Redemption request {self.reference_id}'
 
 
 class WebsiteEngagement(models.Model):

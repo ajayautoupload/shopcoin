@@ -21,7 +21,7 @@ CENT = Decimal('0.01')
 
 
 @transaction.atomic
-def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, items, payment_received=None):
+def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, items, payment_received=None, redemption_to_apply=None):
     try:
         key = UUID(str(idempotency_key))
         discount = Decimal(discount).quantize(CENT)
@@ -51,6 +51,15 @@ def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, ite
     ).first()
     if customer is None:
         raise ValidationError('This customer is not active and connected to your shop.')
+
+    applied_redemption = None
+    if redemption_to_apply:
+        applied_redemption = CoinRedemption.objects.select_for_update().filter(
+            pk=getattr(redemption_to_apply, 'pk', redemption_to_apply), shop=shop,
+            customer=customer, applied_bill__isnull=True, status=CoinRedemption.Status.COMPLETED,
+        ).first()
+        if applied_redemption is None:
+            raise ValidationError('This confirmed redemption is no longer available for this bill.')
 
     normalized_items = []
     catalog_product_ids = set()
@@ -88,6 +97,8 @@ def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, ite
     subtotal = subtotal.quantize(CENT)
     if not normalized_items:
         raise ValidationError('Add at least one product to the bill.')
+    if applied_redemption:
+        discount += applied_redemption.reward_value
     if discount > subtotal:
         raise ValidationError('Discount cannot be greater than the subtotal.')
 
@@ -149,6 +160,10 @@ def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, ite
         cumulative_shopping_after=cumulative_shopping_after,
     )
     BillItem.objects.bulk_create([BillItem(bill=bill, **line) for line in normalized_items])
+    if applied_redemption:
+        applied_redemption.applied_bill = bill
+        applied_redemption.save(update_fields=('applied_bill',))
+        CoinLedger.objects.filter(redemption=applied_redemption).update(bill=bill)
 
     payment = None
     if payment_received > 0:

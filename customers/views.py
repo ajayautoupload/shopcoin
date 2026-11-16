@@ -14,8 +14,8 @@ from accounts.forms import CustomerProfileForm, NotificationSettingsForm, Privac
 from offers.models import ShopAd
 from shops.models import Product, Shop
 from accounts.services import deactivate_customer_account
-from wallet.models import CoinRedemption, CoinRule, WebsiteEngagement
-from wallet.services import begin_website_engagement, get_customer_coin_summary, record_website_engagement_heartbeat
+from wallet.models import CoinRedemption, CoinRedemptionRequest, CoinRule, WebsiteEngagement
+from wallet.services import begin_website_engagement, confirm_coin_redemption_request, get_customer_coin_summary, record_website_engagement_heartbeat
 from django.db.models import Count, Sum
 from django.db.models.functions import Coalesce
 from decimal import Decimal
@@ -121,11 +121,36 @@ def wallet(request):
     wallet = coin_summary['wallet']
     rules = CoinRule.objects.filter(shop=profile.connected_shop, is_active=True, purchase_amount__in=(Decimal('1000.00'), Decimal('5000.00'), Decimal('10000.00'))) if profile.connected_shop else CoinRule.objects.none()
     redemptions = CoinRedemption.objects.filter(customer=profile).select_related('shop').order_by('-redeemed_at')
+    redemptions = redemptions.select_related('source_bill', 'applied_bill')
+    redemption_requests = CoinRedemptionRequest.objects.filter(customer=profile).select_related('shop', 'source_bill', 'redemption__applied_bill').order_by('-created_at')
+    from notifications.models import InAppNotification
+    notifications = InAppNotification.objects.filter(user=request.user).order_by('-created_at')[:10]
     return render(request, 'customer/wallet.html', {
         'profile': profile, 'shop': profile.connected_shop, 'wallet': wallet,
         'coin_summary': coin_summary, 'rules': rules, 'redemptions': redemptions,
-        'entries': wallet.entries.all()[:10],
+        'entries': wallet.entries.all()[:10], 'redemption_requests': redemption_requests,
+        'redemptions': redemptions, 'notifications': notifications,
     })
+
+
+@customer_required
+@require_POST
+def confirm_redemption(request, request_id):
+    profile = request.user.customer_profile
+    try:
+        redemption_request = confirm_coin_redemption_request(
+            request_id=request_id, customer=profile,
+            confirm=request.POST.get('decision') == 'confirm',
+        )
+    except ValidationError as error:
+        for message in error.messages:
+            messages.error(request, message)
+    else:
+        if redemption_request.status == CoinRedemptionRequest.Status.EXPIRED:
+            messages.error(request, 'This redemption request has expired. No coins were deducted.')
+        else:
+            messages.success(request, 'Request confirmed. The shopkeeper must still confirm before any coins are deducted.' if redemption_request.status == CoinRedemptionRequest.Status.PENDING_SHOPKEEPER else 'Redemption request rejected.')
+    return redirect('customers:wallet')
 
 
 @customer_required
@@ -155,7 +180,7 @@ def coin_rules(request):
     shop = profile.connected_shop
     rules = CoinRule.objects.filter(shop=shop, is_active=True, purchase_amount__in=(Decimal('1000.00'), Decimal('5000.00'), Decimal('10000.00'))) if shop else CoinRule.objects.none()
     ranges = {Decimal('1000.00'): '₹1,000–₹4,999', Decimal('5000.00'): '₹5,000–₹9,999', Decimal('10000.00'): '₹10,000+'}
-    rule_slabs = [{'rule': rule, 'range': ranges[rule.purchase_amount]} for rule in rules if rule.purchase_amount in ranges]
+    rule_slabs = [{'rule': rule, 'range': ranges[rule.purchase_amount], 'total_value': Decimal(rule.coins_awarded) * rule.coin_value_per_coin} for rule in rules if rule.purchase_amount in ranges]
     return render(request, 'shared/coin_rules.html', {
         'shop': shop, 'rules': rules,
         'rule_slabs': rule_slabs,

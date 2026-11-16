@@ -68,6 +68,14 @@
         {{ form.discount }}
         {% for error in form.discount.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
       </div>
+      <div class="bill-field">
+        <label class="form-label" for="id_redemption_to_apply">Apply confirmed redemption from an earlier bill</label>
+        <select name="redemption_to_apply" id="id_redemption_to_apply" class="form-select">
+          <option value="">No previous redemption</option>
+          {% for redemption in form.fields.redemption_to_apply.queryset %}<option value="{{ redemption.pk }}" data-value="{{ redemption.reward_value }}">{{ redemption.reference_id }} · {{ redemption.coins_redeemed }} coins · ₹{{ redemption.reward_value|floatformat:2 }}</option>{% endfor %}
+        </select>
+        <div class="form-text">Redemptions requested on this bill cannot be used here.</div>
+      </div>
       <div class="bill-field bill-payment-field">
         <label class="form-label" for="id_payment_received">Payment received (₹)</label>
         {{ form.payment_received }}
@@ -83,6 +91,12 @@
       </section>
     </div>
 
+    <div class="form-check mt-3">
+      {{ form.request_coin_redemption }}
+      <label class="form-check-label" for="{{ form.request_coin_redemption.id_for_label }}">Request coin redemption for a future bill</label>
+      <div class="form-text">This sends the customer a confirmation request. Coins are not deducted now.</div>
+    </div>
+
     <div class="bill-actions">
       <a class="btn btn-outline-secondary" href="{% url 'shops:bills' %}">Cancel</a>
       <button class="btn btn-brand btn-lg" type="submit" {% if not has_active_coin_rule %}disabled{% endif %}><i class="fa-solid fa-receipt me-1" aria-hidden="true"></i> Generate Bill</button>
@@ -96,6 +110,7 @@
   const empty = document.getElementById('empty-line').innerHTML;
   const discount = document.getElementById('id_discount');
   const paymentReceived = document.getElementById('id_payment_received');
+  const redemptionSelect = document.getElementById('id_redemption_to_apply');
   const prices = {
     {% for product in shop.products.all %}"{{ product.pk }}": {{ product.effective_price }},{% endfor %}
   };
@@ -109,7 +124,8 @@
       subtotal += price * quantity;
     });
     const discountAmount = Number.parseFloat(discount.value) || 0;
-    const finalAmount = Math.max(0, subtotal - discountAmount);
+    const redemptionValue = Number.parseFloat(redemptionSelect.selectedOptions[0]?.dataset.value) || 0;
+    const finalAmount = Math.max(0, subtotal - discountAmount - redemptionValue);
     const received = Math.max(0, Number.parseFloat(paymentReceived.value) || 0);
     const remaining = Math.max(0, finalAmount - received);
     document.getElementById('subtotal').textContent = subtotal.toFixed(2);
@@ -142,6 +158,7 @@
   rows.addEventListener('input', calculateTotals);
   discount.addEventListener('input', calculateTotals);
   paymentReceived.addEventListener('input', calculateTotals);
+  redemptionSelect.addEventListener('change', calculateTotals);
   rows.addEventListener('change', (event) => {
     if (!event.target.matches('.bill-product-select')) return;
     const selectedOption = event.target.selectedOptions[0];

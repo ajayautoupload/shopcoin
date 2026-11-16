@@ -4,6 +4,7 @@ from django import forms
 from django.forms import formset_factory
 
 from shops.models import Product
+from wallet.models import CoinRedemption
 
 
 class BillDetailsForm(forms.Form):
@@ -18,6 +19,15 @@ class BillDetailsForm(forms.Form):
         max_digits=12, decimal_places=2,
         widget=forms.NumberInput(attrs={'class': 'form-control', 'step': '0.01', 'min': '0', 'value': '0'}),
     )
+    request_coin_redemption = forms.BooleanField(required=False, label='Request coin redemption for a future bill')
+    redemption_to_apply = forms.ModelChoiceField(queryset=CoinRedemption.objects.none(), required=False, label='Apply confirmed coins from an earlier bill')
+
+    def __init__(self, *args, shop, customer, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['redemption_to_apply'].queryset = CoinRedemption.objects.filter(
+            shop=shop, customer=customer, applied_bill__isnull=True,
+            source_bill__isnull=False,
+        ).order_by('-redeemed_at')
 
 
 class BillItemForm(forms.Form):

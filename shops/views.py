@@ -1,5 +1,5 @@
 from django.contrib import messages
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.db.models import Count, DecimalField, Q, Sum, Value
 from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404, redirect, render
@@ -17,8 +17,8 @@ from decimal import Decimal
 from transactions.models import Bill
 from uuid import uuid4
 from django.core.exceptions import ValidationError
-from wallet.models import CoinRedemption, CoinRule
-from wallet.services import get_customer_coin_summary, redeem_customer_coins
+from wallet.models import CoinRedemption, CoinRedemptionRequest, CoinRule
+from wallet.services import create_coin_redemption_request, finalize_coin_redemption_request, get_customer_coin_summary
 from transactions.models import Credit, CreditPayment
 from transactions.credit_forms import CreditCreateForm, CreditPaymentForm
 from transactions.credit_services import create_credit, receive_credit_payment, reverse_bill_payment, reverse_credit_payment
@@ -305,6 +305,7 @@ def bills(request):
 
 
 @shopkeeper_required
+@transaction.atomic
 @require_http_methods(['GET', 'POST'])
 def create_bill_for_customer(request, customer_id):
     from uuid import uuid4
@@ -326,7 +327,7 @@ def create_bill_for_customer(request, customer_id):
     has_active_coin_rule = active_tiers == {Decimal('1000.00'), Decimal('5000.00'), Decimal('10000.00')}
 
     if request.method == 'POST':
-        form = BillDetailsForm(request.POST)
+        form = BillDetailsForm(request.POST, shop=shop, customer=customer)
         item_formset = BillItemFormSet(request.POST, prefix='items', form_kwargs={'shop': shop})
         if form.is_valid() and item_formset.is_valid():
             active_forms = [line for line in item_formset.forms if line.cleaned_data and not line.cleaned_data.get('DELETE')]
@@ -342,7 +343,13 @@ def create_bill_for_customer(request, customer_id):
                         idempotency_key=form.cleaned_data['idempotency_key'],
                         discount=discount, items=[line.cleaned_data for line in active_forms],
                         payment_received=form.cleaned_data.get('payment_received'),
+                        redemption_to_apply=form.cleaned_data.get('redemption_to_apply'),
                     )
+                    if created and form.cleaned_data.get('request_coin_redemption'):
+                        create_coin_redemption_request(
+                            shopkeeper=request.user, shop=shop, customer=customer,
+                            idempotency_key=uuid4(), source_bill=bill,
+                        )
                 except IntegrityError:
                     bill = Bill.objects.filter(
                         idempotency_key=form.cleaned_data['idempotency_key'], shop=shop, customer=customer,
@@ -360,7 +367,7 @@ def create_bill_for_customer(request, customer_id):
                     messages.info(request, 'This bill was already submitted. No additional coins were added.')
                     return redirect('shops:bill_detail', bill_id=bill.pk)
     else:
-        form = BillDetailsForm(initial={'idempotency_key': uuid4(), 'discount': Decimal('0.00')})
+        form = BillDetailsForm(initial={'idempotency_key': uuid4(), 'discount': Decimal('0.00')}, shop=shop, customer=customer)
         item_formset = BillItemFormSet(prefix='items', form_kwargs={'shop': shop})
     return render(request, 'shopkeeper/bill_form.html', {
         'shop': shop, 'customer': customer, 'form': form, 'item_formset': item_formset,
@@ -398,10 +405,11 @@ def customer_detail(request, customer_id):
         'current_coin_value': coin_summary['current_coin_value'],
         'current_reward_value': coin_summary['current_reward_value'],
     }
-    redemptions = CoinRedemption.objects.filter(customer=customer, shop=shop).select_related('redeemed_by').order_by('-redeemed_at')
+    redemptions = CoinRedemption.objects.filter(customer=customer, shop=shop).select_related('redeemed_by', 'source_bill', 'applied_bill').order_by('-redeemed_at')
+    redemption_requests = CoinRedemptionRequest.objects.filter(customer=customer, shop=shop).select_related('source_bill', 'redemption').order_by('-created_at')
     return render(request, 'shopkeeper/customer_detail.html', {
         'shop': shop, 'customer': customer, 'bills': bills, 'summary': summary, 'wallet': wallet,
-        'redemptions': redemptions, 'redemption_key': uuid4(),
+        'redemptions': redemptions, 'redemption_requests': redemption_requests, 'redemption_key': uuid4(),
     })
 
 
@@ -413,23 +421,36 @@ def clear_customer_coins(request, customer_id):
         messages.error(request, 'Create your shop profile before redeeming customer coins.')
         return redirect('shops:dashboard')
     try:
-        redemption, created = redeem_customer_coins(
-            shopkeeper=request.user,
-            shop=shop,
-            customer_id=customer_id,
+        customer = get_object_or_404(CustomerProfile, pk=customer_id, connected_shop=shop, is_deleted=False)
+        redemption_request, created = create_coin_redemption_request(
+            shopkeeper=request.user, shop=shop, customer=customer,
             idempotency_key=request.POST.get('idempotency_key'),
-            confirmed=request.POST.get('confirm_redemption') == 'yes',
             reward_description=request.POST.get('reward_description', ''),
         )
     except ValidationError as error:
         for message in error.messages:
             messages.error(request, message)
     else:
-        if created:
+        messages.success(request, 'Redemption request sent to the customer. No coins were deducted.')
+    return redirect('shops:customer_detail', customer_id=customer_id)
+
+
+@shopkeeper_required
+@require_POST
+def finalize_redemption(request, request_id):
+    shop = get_current_shopkeeper_shop(request.user)
+    redemption_request = get_object_or_404(CoinRedemptionRequest, pk=request_id, shop=shop)
+    try:
+        redemption = finalize_coin_redemption_request(request_id=request_id, shopkeeper=request.user, shop=shop)
+    except ValidationError as error:
+        for message in error.messages:
+            messages.error(request, message)
+    else:
+        if redemption:
             messages.success(request, f'{redemption.coins_redeemed} coins redeemed for ₹{redemption.reward_value}.')
         else:
-            messages.info(request, 'This redemption was already recorded; no additional coins were cleared.')
-    return redirect('shops:customer_detail', customer_id=customer_id)
+            messages.error(request, 'This redemption request has expired. No coins were deducted.')
+    return redirect('shops:customer_detail', customer_id=redemption_request.customer_id)
 
 
 @shopkeeper_required
@@ -437,7 +458,7 @@ def coin_rules(request):
     shop = get_current_shopkeeper_shop(request.user)
     rules = CoinRule.objects.filter(shop=shop, is_active=True, purchase_amount__in=(Decimal('1000.00'), Decimal('5000.00'), Decimal('10000.00'))) if shop else CoinRule.objects.none()
     ranges = {Decimal('1000.00'): '₹1,000–₹4,999', Decimal('5000.00'): '₹5,000–₹9,999', Decimal('10000.00'): '₹10,000+'}
-    rule_slabs = [{'rule': rule, 'range': ranges[rule.purchase_amount]} for rule in rules if rule.purchase_amount in ranges]
+    rule_slabs = [{'rule': rule, 'range': ranges[rule.purchase_amount], 'total_value': Decimal(rule.coins_awarded) * rule.coin_value_per_coin} for rule in rules if rule.purchase_amount in ranges]
     return render(request, 'shared/coin_rules.html', {
         'shop': shop, 'rules': rules,
         'rule_slabs': rule_slabs,

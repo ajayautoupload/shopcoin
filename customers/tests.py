@@ -99,7 +99,8 @@ class CustomerShopExperienceTests(TestCase):
         response = self.client.get(reverse('customers:coin_rules'))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Bills below ₹1,000 earn no purchase coins')
-        self.assertContains(response, '₹10.00 per coin')
+        self.assertContains(response, '₹10.00')
+        self.assertContains(response, 'Total coin value')
         self.assertNotContains(response, '₹100.00')
         self.assertNotContains(response, 'Earn 99 coins')
 

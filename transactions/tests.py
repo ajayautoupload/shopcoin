@@ -1,16 +1,22 @@
 from decimal import Decimal
+from datetime import timedelta
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+import unittest
 from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
-from django.test import TestCase
+from django.db import connection, connections
+from django.test import TestCase, TransactionTestCase
 from django.urls import reverse
+from django.utils import timezone
 
 from accounts.models import CustomerProfile, ShopkeeperProfile, UserProfile
 from shops.models import Product, Shop
 from transactions.models import Bill, BillPayment, Credit, CreditPayment
 from transactions.services import create_bill, set_bill_status
-from wallet.models import CoinLedger, CoinRedemption, CoinRule, CoinValue, Wallet
+from wallet.models import CoinLedger, CoinRedemption, CoinRedemptionRequest, CoinRule, CoinValue, Wallet
 from wallet.services import get_customer_coin_summary, get_coin_rule_for_balance
 
 User = get_user_model()
@@ -338,20 +344,31 @@ class BillFlowTests(TestCase):
         self.create(price='3500.00')
         self.client.force_login(self.owner)
         response = self.client.get(reverse('shops:customer_detail', args=[self.customer.pk]))
-        self.assertContains(response, 'Redeem 55 Coins')
+        self.assertContains(response, 'Request 55 Coins')
         key = response.context['redemption_key']
         url = reverse('shops:clear_customer_coins', args=[self.customer.pk])
         data = {'idempotency_key': key, 'confirm_redemption': 'yes', 'reward_description': 'One eligible shirt'}
 
-        self.assertEqual(self.client.post(url, {'idempotency_key': key, 'confirm_redemption': 'yes'}).status_code, 302)
-        self.assertFalse(CoinRedemption.objects.exists())
         self.assertEqual(self.client.post(url, data).status_code, 302)
+        self.wallet.refresh_from_db()
+        redemption_request = CoinRedemptionRequest.objects.get()
+        self.assertEqual(self.wallet.balance, 55)
+        self.assertEqual(redemption_request.status, CoinRedemptionRequest.Status.PENDING_CUSTOMER)
+        self.assertEqual(self.client.post(url, data).status_code, 302)
+        self.assertEqual(CoinRedemptionRequest.objects.count(), 1)
+        self.client.force_login(self.customer_user)
+        self.assertEqual(self.client.post(reverse('customers:confirm_redemption', args=[redemption_request.pk]), {'decision': 'confirm'}).status_code, 302)
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.balance, 55)
+        self.client.force_login(self.owner)
+        self.assertEqual(self.client.post(reverse('shops:finalize_redemption', args=[redemption_request.pk])).status_code, 302)
+        self.assertEqual(self.client.post(reverse('shops:finalize_redemption', args=[redemption_request.pk])).status_code, 302)
         self.wallet.refresh_from_db()
         redemption = CoinRedemption.objects.get()
         self.assertEqual(self.wallet.balance, 0)
         self.assertEqual((redemption.coins_redeemed, redemption.coin_value_per_coin, redemption.reward_value, redemption.reward_description, redemption.remaining_coin_balance), (55, Decimal('10.00'), Decimal('550.00'), 'One eligible shirt', 0))
         self.assertEqual(CoinLedger.objects.get(redemption=redemption).coin_delta, -55)
-        self.assertEqual(self.client.post(url, data).status_code, 302)
+        self.assertEqual(self.client.post(reverse('shops:finalize_redemption', args=[redemption_request.pk])).status_code, 302)
         self.assertEqual(CoinRedemption.objects.count(), 1)
         self.client.force_login(self.customer_user)
         wallet_response = self.client.get(reverse('customers:wallet'))
@@ -381,10 +398,95 @@ class BillFlowTests(TestCase):
         other_wallet = Wallet.objects.create(customer=other_customer, balance=55)
         self.client.force_login(self.owner)
         response = self.client.post(reverse('shops:clear_customer_coins', args=[other_customer.pk]), {'idempotency_key': uuid4(), 'confirm_redemption': 'yes', 'reward_description': 'Unauthorized item'})
-        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.status_code, 404)
         other_wallet.refresh_from_db()
         self.assertEqual(other_wallet.balance, 55)
         self.assertFalse(CoinRedemption.objects.exists())
+
+    def test_customer_rejects_redemption_without_any_coin_deduction(self):
+        self.reset_wallet()
+        self.create(price='2000.00')
+        self.client.force_login(self.owner)
+        detail = self.client.get(reverse('shops:customer_detail', args=[self.customer.pk]))
+        response = self.client.post(reverse('shops:clear_customer_coins', args=[self.customer.pk]), {'idempotency_key': detail.context['redemption_key']})
+        self.assertEqual(response.status_code, 302)
+        pending = CoinRedemptionRequest.objects.get()
+        self.client.force_login(self.customer_user)
+        self.client.post(reverse('customers:confirm_redemption', args=[pending.pk]), {'decision': 'reject'})
+        self.client.force_login(self.owner)
+        self.client.post(reverse('shops:finalize_redemption', args=[pending.pk]))
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.balance, 20)
+        self.assertEqual(CoinRedemptionRequest.objects.get().status, CoinRedemptionRequest.Status.REJECTED)
+        self.assertFalse(CoinRedemption.objects.exists())
+
+    def test_expired_redemption_request_cannot_be_confirmed_or_finalized(self):
+        self.reset_wallet()
+        self.create(price='2000.00')
+        from wallet.services import create_coin_redemption_request, finalize_coin_redemption_request
+        request_obj, _ = create_coin_redemption_request(
+            shopkeeper=self.owner, shop=self.shop, customer=self.customer, idempotency_key=uuid4(),
+        )
+        CoinRedemptionRequest.objects.filter(pk=request_obj.pk).update(expires_at=timezone.now() - timedelta(seconds=1))
+        self.assertEqual(self.client.force_login(self.customer_user), None)
+        response = self.client.post(reverse('customers:confirm_redemption', args=[request_obj.pk]), {'decision': 'confirm'})
+        self.assertEqual(response.status_code, 302)
+        request_obj.refresh_from_db()
+        self.assertEqual(request_obj.status, CoinRedemptionRequest.Status.EXPIRED)
+        with self.assertRaises(ValidationError):
+            finalize_coin_redemption_request(request_id=request_obj.pk, shopkeeper=self.owner, shop=self.shop)
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.balance, 20)
+
+    def test_redemption_finalization_rejects_request_above_available_wallet_balance(self):
+        from wallet.services import create_coin_redemption_request, finalize_coin_redemption_request
+
+        self.reset_wallet()
+        self.create(price='2000.00')
+        redemption_request, _ = create_coin_redemption_request(
+            shopkeeper=self.owner, shop=self.shop, customer=self.customer, idempotency_key=uuid4(),
+        )
+        redemption_request.status = CoinRedemptionRequest.Status.PENDING_SHOPKEEPER
+        redemption_request.customer_confirmed_at = timezone.now()
+        redemption_request.save(update_fields=('status', 'customer_confirmed_at'))
+
+        self.wallet.refresh_from_db()
+        self.wallet.balance = 5
+        self.wallet.save(update_fields=('balance',))
+
+        with self.assertRaisesMessage(ValidationError, 'requests 20 coins, but only 5 are available'):
+            finalize_coin_redemption_request(
+                request_id=redemption_request.pk, shopkeeper=self.owner, shop=self.shop,
+            )
+
+        self.wallet.refresh_from_db()
+        redemption_request.refresh_from_db()
+        self.assertEqual(self.wallet.balance, 5)
+        self.assertEqual(redemption_request.status, CoinRedemptionRequest.Status.PENDING_SHOPKEEPER)
+        self.assertFalse(CoinRedemption.objects.filter(customer=self.customer).exists())
+
+    def test_confirmed_redemption_can_only_be_applied_to_later_bill(self):
+        self.reset_wallet()
+        source_bill, _ = self.create(price='2000.00')
+        request_obj = CoinRedemptionRequest.objects.create(
+            customer=self.customer, shop=self.shop, requested_by=self.owner, source_bill=source_bill,
+            coins_requested=20, reward_value=Decimal('200.00'), expires_at=timezone.now() + timedelta(days=1),
+            status=CoinRedemptionRequest.Status.PENDING_SHOPKEEPER, customer_confirmed_at=timezone.now(),
+        )
+        from wallet.services import finalize_coin_redemption_request
+        redemption = finalize_coin_redemption_request(request_id=request_obj.pk, shopkeeper=self.owner, shop=self.shop)
+        self.assertEqual(redemption.source_bill_id, source_bill.pk)
+        later_bill, _ = create_bill(
+            shopkeeper=self.owner, shop=self.shop, customer_id=self.customer.pk, idempotency_key=uuid4(),
+            discount='0.00', payment_received='100.00',
+            items=[{'product': None, 'product_name': 'Later purchase', 'quantity': 1, 'unit_price': '1000.00'}],
+            redemption_to_apply=redemption,
+        )
+        redemption.refresh_from_db()
+        self.assertEqual(redemption.applied_bill_id, later_bill.pk)
+        self.assertEqual(later_bill.discount, Decimal('200.00'))
+        self.assertEqual(CoinLedger.objects.filter(redemption=redemption, bill=later_bill).count(), 1)
+
 
     def test_all_nine_slab_examples(self):
         from wallet.services import calculate_coins_for_purchase
@@ -495,3 +597,84 @@ class BillFlowTests(TestCase):
         self.assertContains(response, self.customer.phone)
         self.assertEqual(self.client.get(reverse('shops:create_bill_for_customer', args=[self.customer.pk])).status_code, 200)
         self.assertEqual(self.client.get(reverse('shops:create_bill_for_customer', args=[999999])).status_code, 404)
+
+
+@unittest.skipUnless(connection.vendor == 'postgresql', 'PostgreSQL row-lock concurrency test; SQLite does not support select_for_update.')
+class PostgreSQLRedemptionConcurrencyTests(TransactionTestCase):
+    reset_sequences = True
+
+    def setUp(self):
+        self.owner = User.objects.create_user('pg-redemption-owner', password='StrongPass!482')
+        UserProfile.objects.create(user=self.owner, role=UserProfile.Role.SHOPKEEPER)
+        ShopkeeperProfile.objects.create(user=self.owner, phone='9896500001')
+        self.shop = Shop.objects.create(
+            owner=self.owner, name='PG Redemption Shop', phone='9896500001', address='1 Road',
+            city='Pune', state='Maharashtra', pincode='411001', status=Shop.Status.APPROVED,
+        )
+        customer_user = User.objects.create_user('pg-redemption-customer', password='StrongPass!482')
+        UserProfile.objects.create(user=customer_user, role=UserProfile.Role.CUSTOMER)
+        self.customer = CustomerProfile.objects.create(user=customer_user, connected_shop=self.shop, phone='9896500002')
+        self.wallet = Wallet.objects.create(customer=self.customer, balance=10)
+        CoinLedger.objects.create(
+            wallet=self.wallet, shop=self.shop, entry_type=CoinLedger.EntryType.ADJUSTMENT,
+            coin_source=CoinLedger.Source.PURCHASE, coin_delta=10, coin_value_per_coin=Decimal('10.00'),
+            balance_before=0, balance_after=10, description='Concurrency fixture',
+        )
+
+    def _parallel_calls(self, callback):
+        barrier = Barrier(2)
+
+        def run():
+            connections.close_all()
+            try:
+                barrier.wait(timeout=15)
+                return callback()
+            finally:
+                connections.close_all()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(run) for _ in range(2)]
+            return [future.result(timeout=30) for future in futures]
+
+    def test_simultaneous_duplicate_request_creation_returns_one_request(self):
+        from wallet.services import create_coin_redemption_request
+
+        key = uuid4()
+        results = self._parallel_calls(lambda: create_coin_redemption_request(
+            shopkeeper=User.objects.get(pk=self.owner.pk),
+            shop=Shop.objects.get(pk=self.shop.pk),
+            customer=CustomerProfile.objects.get(pk=self.customer.pk),
+            idempotency_key=key,
+        ))
+
+        self.assertEqual(CoinRedemptionRequest.objects.filter(idempotency_key=key).count(), 1)
+        self.assertEqual({result[0].pk for result in results}, {CoinRedemptionRequest.objects.get(idempotency_key=key).pk})
+        self.assertCountEqual([created for _, created in results], [True, False])
+
+    def test_simultaneous_finalization_deducts_wallet_only_once(self):
+        from wallet.services import finalize_coin_redemption_request
+
+        request_obj = CoinRedemptionRequest.objects.create(
+            customer=self.customer, shop=self.shop, requested_by=self.owner,
+            idempotency_key=uuid4(), coins_requested=10, reward_value=Decimal('100.00'),
+            status=CoinRedemptionRequest.Status.PENDING_SHOPKEEPER,
+            customer_confirmed_at=timezone.now(), expires_at=timezone.now() + timedelta(days=1),
+        )
+
+        def finalize():
+            try:
+                result = finalize_coin_redemption_request(
+                    request_id=request_obj.pk, shopkeeper=User.objects.get(pk=self.owner.pk),
+                    shop=Shop.objects.get(pk=self.shop.pk),
+                )
+                return ('completed', result.pk)
+            except ValidationError:
+                return ('already_finalized', None)
+
+        results = self._parallel_calls(finalize)
+        self.wallet.refresh_from_db()
+        request_obj.refresh_from_db()
+        self.assertCountEqual([result[0] for result in results], ['completed', 'already_finalized'])
+        self.assertEqual(self.wallet.balance, 0)
+        self.assertEqual(CoinRedemption.objects.filter(customer=self.customer).count(), 1)
+        self.assertEqual(request_obj.status, CoinRedemptionRequest.Status.COMPLETED)

@@ -1,53 +1,103 @@
 (() => {
-  const translations = {
-    'Shop Coin': 'शॉप कॉइन', 'Shopkeeper Login': 'दुकानदार लॉगिन', 'Customer Login': 'ग्राहक लॉगिन',
-    'Customer login': 'ग्राहक लॉगिन', 'Register your shop': 'अपनी दुकान रजिस्टर करें',
-    'Home': 'होम', 'Shop': 'दुकान', 'Wallet': 'वॉलेट', 'Coin Rules': 'कॉइन नियम',
-    'Profile': 'प्रोफ़ाइल', 'Dashboard': 'डैशबोर्ड', 'Products': 'उत्पाद', 'Customers': 'ग्राहक',
-    'Orders': 'ऑर्डर', 'Sales': 'बिक्री', 'Log out': 'लॉग आउट', 'Sign out': 'साइन आउट',
-    'Language & theme': 'भाषा और थीम', 'Language': 'भाषा', 'Theme': 'थीम', 'English': 'अंग्रेज़ी',
-    'हिन्दी': 'हिन्दी', 'Light': 'लाइट', 'Dark': 'डार्क', 'Earn Coins.': 'कॉइन कमाएँ।',
-    'Save More.': 'ज़्यादा बचाएँ।', 'A smarter way to shop': 'खरीदारी का बेहतर तरीका',
-    'Shop from local businesses, earn Shop Coins, and': 'स्थानीय दुकानों से खरीदारी करें, शॉप कॉइन कमाएँ और',
-    'enjoy rewards on your purchases.': 'अपनी खरीदारी पर इनाम पाएँ।',
-    'Shop Coin connects customers with local shops through a simple rewards': 'शॉप कॉइन ग्राहकों को स्थानीय दुकानों से जोड़ता है और',
-    'system that makes everyday shopping more rewarding.': 'रोज़ की खरीदारी पर इनाम देता है।',
-    'Register as a shopkeeper': 'दुकानदार के रूप में रजिस्टर करें', 'First name': 'पहला नाम',
-    'Last name': 'उपनाम', 'Email': 'ईमेल', 'Phone': 'फ़ोन', 'Business name': 'व्यवसाय का नाम',
-    'Password': 'पासवर्ड', 'Confirm password': 'पासवर्ड की पुष्टि करें',
-    'Start earning more from local shopping.': 'स्थानीय खरीदारी से अधिक कमाई शुरू करें।',
-    'Create Shopkeeper account': 'दुकानदार खाता बनाएँ', 'Already have an account?': 'पहले से खाता है?',
-    'Log in': 'लॉग इन', 'Add Product': 'उत्पाद जोड़ें', 'Save Product': 'उत्पाद सेव करें',
-    'My Products': 'मेरे उत्पाद', 'Manage products': 'उत्पाद प्रबंधित करें',
-    'Create bill': 'बिल बनाएँ', 'Create Bill': 'बिल बनाएँ', 'Generate Bill': 'बिल बनाएँ',
-    'Cancel': 'रद्द करें', 'Search': 'खोजें', 'Create Udhar': 'उधार दर्ज करें',
-    'Udhar / Credit': 'उधार', 'Customer': 'ग्राहक', 'Quantity': 'मात्रा',
-    'Product name': 'उत्पाद का नाम', 'Price (₹)': 'कीमत (₹)', 'Subtotal': 'उप-योग',
-    'Final amount': 'अंतिम राशि', 'Discount (₹)': 'छूट (₹)', 'Description': 'विवरण',
-    'Due date': 'देय तिथि', 'Reference': 'संदर्भ', 'Existing bill (optional)': 'मौजूदा बिल (वैकल्पिक)',
-    'Active': 'सक्रिय', 'Inactive': 'निष्क्रिय', 'Is new': 'नया उत्पाद', 'Stock': 'स्टॉक',
-    'Name not provided': 'नाम उपलब्ध नहीं', 'Owner': 'मालिक'
-  };
-  const savedLanguage = localStorage.getItem('shopcoin-language') || 'en';
+  let translations = {};
+  const languageApi = '/preferences/language/';
+  const catalogueApi = '/preferences/translations/';
+  const pageLanguage = document.documentElement.lang;
+  const savedLanguage = ['en', 'hi'].includes(pageLanguage)
+    ? pageLanguage
+    : (localStorage.getItem('shopcoin-language') || 'en');
   const savedTheme = localStorage.getItem('shopcoin-theme') || 'light';
+  const translatableAttributes = ['placeholder', 'title', 'aria-label', 'alt'];
+
+  function translateValue(value, language) {
+    if (language !== 'hi') return value;
+    if (translations[value] !== undefined) return translations[value];
+    const patterns = [
+      [/^Bill (.+) was generated successfully\.$/, 'बिल $1 सफलतापूर्वक बनाया गया।'],
+      [/^Payment ₹(.+) recorded\.$/, '₹$1 का भुगतान दर्ज किया गया।'],
+      [/^(.+) was added to your products\.$/, '$1 आपके उत्पादों में जोड़ दिया गया।'],
+      [/^(.+) was updated\.$/, '$1 अपडेट किया गया।'],
+      [/^(.+) was deleted\.$/, '$1 हटा दिया गया।'],
+      [/^(.+) was created\.$/, '$1 बनाया गया।'],
+      [/^(.+) is now active\.$/, '$1 अब सक्रिय है।'],
+      [/^(.+) is now inactive\.$/, '$1 अब निष्क्रिय है।'],
+      [/^₹(.+) remaining$/, '₹$1 बाकी'],
+      [/^Hello, (.+)$/, 'नमस्ते, $1'],
+      [/^Create bill for (.+)$/, '$1 के लिए बिल बनाएँ'],
+      [/^Available at (.+)$/, 'यहाँ उपलब्ध: $1'],
+      [/^New styles from (.+) will appear here\.$/, '$1 के नए उत्पाद यहाँ दिखेंगे।'],
+      [/^(.+) offers will appear here\.$/, '$1 के ऑफ़र यहाँ दिखेंगे।'],
+      [/^Coins earned: (.+) · Wallet now (.+) coins$/, 'कमाए कॉइन: $1 · वॉलेट में अभी $2 कॉइन'],
+      [/^Total Reward Value ₹([0-9,.]+)$/, 'कुल इनाम मूल्य ₹$1'],
+      [/^Worth ₹([0-9,.]+)$/, 'मूल्य ₹$1'],
+      [/^Current streak: (\d+) days?$/, 'वर्तमान सिलसिला: $1 दिन'],
+      [/^Longest streak: (\d+) days?$/, 'सबसे लंबा सिलसिला: $1 दिन'],
+      [/^(\d+) coins redeemed for ₹(.+)\.$/, '₹$2 के $1 कॉइन रिडीम हुए।'],
+      [/^Add Customer · (.+)$/, 'ग्राहक जोड़ें · $1'],
+      [/^Customers · (.+)$/, 'ग्राहक · $1'],
+      [/^(.+) customers, including deleted accounts\.$/, '$1 ग्राहक, हटाए गए खातों सहित।'],
+      [/^Bill total ₹([0-9,.]+)$/, 'बिल की कुल राशि ₹$1'],
+      [/^Total ₹([0-9,.]+)$/, 'कुल ₹$1'],
+      [/^Payment amount \(maximum ₹([0-9,.]+)\)$/, 'भुगतान राशि (अधिकतम ₹$1)'],
+      [/^Request (\d+) Coins · ₹([0-9,.]+)$/, '$1 कॉइन का अनुरोध · ₹$2'],
+      [/^Website Coins: (\d+)\/100 · Qualifying Bills: (\d+)\/3$/, 'वेबसाइट कॉइन: $1/100 · योग्य बिल: $2/3'],
+      [/^Current streak: (\d+) days · Longest streak: (\d+) days · Total Website Coins earned: (\d+)$/, 'वर्तमान सिलसिला: $1 दिन · सबसे लंबा सिलसिला: $2 दिन · कुल कमाए वेबसाइट कॉइन: $3'],
+      [/^Delete (.+)\?$/, '$1 हटाएँ?'],
+      [/^© (\d{4}) Shop Coin$/, '© $1 शॉप कॉइन'],
+      [/^· Application (.+)$/, '· आवेदन $1'],
+    ];
+    for (const [pattern, replacement] of patterns) {
+      if (pattern.test(value)) return value.replace(pattern, replacement);
+    }
+    return value;
+  }
+
+  function translateTextNode(node, language) {
+    if (!node.parentElement || /^(SCRIPT|STYLE|NOSCRIPT)$/.test(node.parentElement.tagName)) return;
+    if (node.dataset.originalText === undefined) node.dataset.originalText = node.nodeValue;
+    const original = node.parentElement.dataset.i18nKey || node.dataset.originalText;
+    const trimmed = original.trim();
+    if (!trimmed) return;
+    const translated = translateValue(trimmed, language);
+    const nextValue = original.replace(trimmed, translated);
+    if (node.nodeValue !== nextValue) node.nodeValue = nextValue;
+  }
+
+  function translateElement(element, language) {
+    if (element.nodeType === Node.TEXT_NODE) {
+      translateTextNode(element, language);
+      return;
+    }
+    if (!(element instanceof Element)) return;
+    if (element.matches('script,style,noscript')) return;
+    for (const attribute of translatableAttributes) {
+      if (!element.hasAttribute(attribute)) continue;
+      const originalName = `original${attribute.replace(/(^|-)(.)/g, (_, __, letter) => letter.toUpperCase())}`;
+      const markedOriginal = element.dataset[`i18nAttr${attribute.replace(/(^|-)(.)/g, (_, __, letter) => letter.toUpperCase())}`];
+      if (markedOriginal !== undefined) element.dataset[originalName] = markedOriginal;
+      if (element.dataset[originalName] === undefined) element.dataset[originalName] = element.getAttribute(attribute);
+      const translated = translateValue(element.dataset[originalName], language);
+      if (element.getAttribute(attribute) !== translated) element.setAttribute(attribute, translated);
+    }
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    nodes.forEach(node => translateTextNode(node, language));
+  }
 
   function applyLanguage(language) {
     document.documentElement.lang = language;
     document.querySelectorAll('[data-language-choice]').forEach(button => {
       button.setAttribute('aria-pressed', String(button.dataset.languageChoice === language));
     });
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    const textNodes = [];
-    while (walker.nextNode()) textNodes.push(walker.currentNode);
-    textNodes.forEach(node => {
-      if (!node.parentElement || /^(SCRIPT|STYLE)$/.test(node.parentElement.tagName)) return;
-      if (node.dataset.originalText === undefined) node.dataset.originalText = node.nodeValue;
-      const original = node.dataset.originalText;
-      const trimmed = original.trim();
-      if (!trimmed) return;
-      const translated = language === 'hi' ? (translations[trimmed] || trimmed) : trimmed;
-      node.nodeValue = original.replace(trimmed, translated);
-    });
+    translateElement(document.body, language);
+  }
+
+  function loadCatalogue(language) {
+    return fetch(`${catalogueApi}?language=${encodeURIComponent(language)}`, {credentials: 'same-origin'})
+      .then(response => response.ok ? response.json() : {})
+      .then(catalogue => { translations = catalogue; applyLanguage(language); })
+      .catch(() => { translations = {}; applyLanguage(language); });
   }
 
   function applyTheme(theme) {
@@ -60,8 +110,15 @@
   document.addEventListener('click', event => {
     const languageButton = event.target.closest('[data-language-choice]');
     if (languageButton) {
-      localStorage.setItem('shopcoin-language', languageButton.dataset.languageChoice);
-      applyLanguage(languageButton.dataset.languageChoice);
+      const language = languageButton.dataset.languageChoice;
+      localStorage.setItem('shopcoin-language', language);
+      const csrf = document.querySelector('meta[name="csrf-token"]')?.content;
+      fetch(languageApi, {
+        method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRFToken': csrf || ''},
+        body: new URLSearchParams({language}),
+      }).catch(() => {});
+      loadCatalogue(language);
     }
     const themeButton = event.target.closest('[data-theme-choice]');
     if (themeButton) {
@@ -70,6 +127,13 @@
     }
   });
 
+  new MutationObserver(records => {
+    for (const record of records) {
+      record.addedNodes.forEach(node => translateElement(node, document.documentElement.lang || savedLanguage));
+      if (record.type === 'characterData') translateTextNode(record.target, document.documentElement.lang || savedLanguage);
+    }
+  }).observe(document.body, {childList: true, subtree: true, characterData: true});
+
   applyTheme(savedTheme);
-  applyLanguage(savedLanguage);
+  loadCatalogue(savedLanguage);
 })();

@@ -17,6 +17,31 @@ from wallet.models import Wallet
 User = get_user_model()
 
 
+class LanguagePreferenceTests(TestCase):
+    def test_language_choice_is_saved_to_user_and_cookie(self):
+        user = User.objects.create_user('language-user', password='StrongPass!482')
+        profile = UserProfile.objects.create(user=user, role=UserProfile.Role.CUSTOMER)
+        self.client.force_login(user)
+        response = self.client.post(reverse('core:set_language_preference'), {'language': 'hi'})
+        self.assertEqual(response.status_code, 200)
+        profile.refresh_from_db()
+        self.assertEqual(profile.preferred_language, 'hi')
+        self.assertEqual(response.cookies['django_language'].value, 'hi')
+
+    def test_shared_catalogue_provides_hindi_for_every_interface_key(self):
+        from core.translations import HI
+        response = self.client.get(reverse('core:translation_catalogue'), {'language': 'hi'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), HI)
+        self.assertGreaterEqual(len(HI), 400)
+        self.assertTrue(all(key != value for key, value in HI.items() if key != 'हिन्दी'))
+
+    def test_mobile_navbar_uses_bottom_navigation_without_hamburger(self):
+        response = self.client.get(reverse('core:home'))
+        self.assertNotContains(response, 'navbar-toggler')
+        self.assertContains(response, 'site-preferences')
+
+
 class DemoSeedCommandTests(TestCase):
     def test_seed_command_is_idempotent_and_creates_exact_demo_catalog(self):
         with TemporaryDirectory(dir=Path(__file__).resolve().parents[1]) as media_root, override_settings(MEDIA_ROOT=media_root, DEBUG=True):
@@ -74,6 +99,64 @@ class AuthorizationPageMatrixTests(TestCase):
         for path in ('/', '/login/', '/register/shopkeeper/', '/about/', '/terms/', '/privacy-policy/', '/help/'):
             with self.subTest(path=path):
                 self.assertEqual(self.client.get(path).status_code, 200)
+
+    def test_customer_and_shopkeeper_page_matrices_render_in_both_languages(self):
+        from decimal import Decimal
+        from transactions.services import create_bill
+        from transactions.credit_services import create_credit
+        from uuid import uuid4
+        bill, _ = create_bill(
+            shopkeeper=self.shopkeeper, shop=self.shop, customer_id=self.customer_profile.pk,
+            idempotency_key=uuid4(), discount='0.00',
+            items=[{'product': self.product, 'product_name': self.product.name, 'quantity': 1, 'unit_price': Decimal('10.00')}],
+        )
+        credit = create_credit(shopkeeper=self.shopkeeper, shop=self.shop, customer_id=self.customer_profile.pk, amount='25.00', description='Test credit')
+        customer_pages = (
+            '/customer/', '/customer/wallet/', '/customer/credit/', '/customer/history/',
+            '/customer/shop/', '/customer/coin-rules/', '/customer/shop/matrix-product/',
+            '/customer/profile/', '/customer/profile/edit/', '/customer/notifications/',
+            '/customer/scan/', '/customer/privacy/', '/account/password/', f'/customer/history/{bill.pk}/',
+        )
+        shopkeeper_pages = (
+            '/shopkeeper/', '/shopkeeper/shop/create/', '/shopkeeper/shop/matrix-shop/',
+            '/shopkeeper/sales/', '/shopkeeper/customers/', '/shopkeeper/customers/add/',
+            '/shopkeeper/coins/', '/shopkeeper/profile/', '/shopkeeper/notifications/',
+            '/shopkeeper/coin-rules/', '/shopkeeper/bills/', '/shopkeeper/products/',
+            '/shopkeeper/products/add/', f'/shopkeeper/products/{self.product.pk}/edit/',
+            f'/shopkeeper/products/{self.product.pk}/delete/', '/shopkeeper/ads/',
+            '/shopkeeper/ads/add/', f'/shopkeeper/ads/{self.ad.pk}/edit/',
+            f'/shopkeeper/ads/{self.ad.pk}/delete/', '/shopkeeper/credits/',
+            '/shopkeeper/credits/create/', f'/shopkeeper/credits/{credit.pk}/',
+            f'/shopkeeper/bills/{self.customer_profile.pk}/create/', f'/shopkeeper/bills/{bill.pk}/',
+            f'/shopkeeper/customers/{self.customer_profile.pk}/',
+        )
+        for language in ('en', 'hi'):
+            self.client.cookies['django_language'] = language
+            self.customer.profile.preferred_language = language
+            self.customer.profile.save(update_fields=('preferred_language', 'updated_at'))
+            self.shopkeeper.profile.preferred_language = language
+            self.shopkeeper.profile.save(update_fields=('preferred_language', 'updated_at'))
+            self.client.force_login(self.customer)
+            for path in customer_pages:
+                with self.subTest(language=language, path=path):
+                    response = self.client.get(path)
+                    self.assertEqual(response.status_code, 200)
+                    if language == 'hi':
+                        self.assertContains(response, 'data-i18n-key=')
+                        self.assertContains(response, 'होम')
+                    else:
+                        self.assertContains(response, '<html lang="en">', html=False)
+            self.client.force_login(self.shopkeeper)
+            for path in shopkeeper_pages:
+                with self.subTest(language=language, path=path):
+                    response = self.client.get(path)
+                    self.assertEqual(response.status_code, 200)
+                    if language == 'hi':
+                        self.assertContains(response, 'data-i18n-key=')
+                        self.assertContains(response, 'डैशबोर्ड')
+                    else:
+                        self.assertContains(response, '<html lang="en">', html=False)
+            self.client.logout()
 
     def test_homepage_stays_generic_for_guests_customers_and_shopkeepers(self):
         for user in (None, self.customer, self.shopkeeper):

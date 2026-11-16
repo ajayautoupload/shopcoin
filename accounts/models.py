@@ -13,6 +13,7 @@ class UserProfile(models.Model):
 
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='profile')
     role = models.CharField(max_length=12, choices=Role.choices)
+    preferred_language = models.CharField(max_length=2, choices=(('en', 'English'), ('hi', 'Hindi')), default='en')
     is_demo = models.BooleanField(default=False, db_index=True)
     is_deleted = models.BooleanField(default=False, db_index=True)
     deleted_at = models.DateTimeField(null=True, blank=True)

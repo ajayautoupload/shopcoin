@@ -4,7 +4,7 @@
 <div class="container app-shell py-4">
   <header class="page-heading"><span class="eyebrow">🪙 Shop Coin rewards</span><h1>Coin Rules</h1><p>{% if shop %}Rules for {{ shop.name }}{% else %}How Shop Coin rewards work{% endif %}</p></header>
   <section class="content-section"><div class="rules-card"><h2 class="h5">Purchase Coins</h2>
-    {% if rules %}<div class="table-responsive"><table class="table align-middle"><thead><tr><th>Bill total after discount</th><th>Purchase Coin value</th></tr></thead><tbody>{% for slab in rule_slabs %}<tr><td>{{ slab.range }}</td><td>₹{{ slab.rule.coin_value_per_coin|floatformat:2 }} per coin</td></tr>{% endfor %}</tbody></table></div>
+    {% if rules %}<div class="table-responsive"><table class="table align-middle"><thead><tr><th>Shopping amount</th><th>Coins earned</th><th>Value per coin</th><th>Total coin value</th></tr></thead><tbody>{% for slab in rule_slabs %}<tr><td>{{ slab.range }}</td><td>{{ slab.rule.coins_awarded }}</td><td>₹{{ slab.rule.coin_value_per_coin|floatformat:2 }}</td><td>₹{{ slab.total_value|floatformat:2 }}</td></tr>{% endfor %}</tbody></table></div>
     {% else %}<p class="mb-0">{% if shop %}No active Coin Rule configured for this shop. Ask the administrator to configure the slabs.{% else %}Your shopkeeper will configure earning rules for your shop.{% endif %}</p>{% endif %}
     <p class="small text-muted mb-0">Bills below ₹1,000 earn no purchase coins. On an eligible bill, each complete ₹100 earns 1 purchase coin. Coin value is saved when each purchase coin is earned.</p>
   </div></section>

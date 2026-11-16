@@ -235,7 +235,8 @@ class ShopCustomerManagementTests(TestCase):
         response = self.client.get(reverse('shops:coin_rules'))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, '₹1,000–₹4,999')
-        self.assertContains(response, '₹10.00 per coin')
+        self.assertContains(response, '₹10.00')
+        self.assertContains(response, 'Total coin value')
         self.assertNotContains(response, 'Earn 50 coins')
         self.assertContains(self.client.get(reverse('shops:dashboard')), 'Coin Rules')
 

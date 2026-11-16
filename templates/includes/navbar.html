@@ -19,7 +19,6 @@
           <span class="shop-brand-copy"><strong>{% if connected_shop %}{{ connected_shop.name }}{% else %}Shop Coin{% endif %}</strong>{% if connected_shop.city %}<small>{{ connected_shop.city }}</small>{% endif %}</span>
         </a>
       {% endwith %}
-      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#customerNav" aria-label="Toggle navigation"><span class="navbar-toggler-icon"></span></button>
       <div class="collapse navbar-collapse" id="customerNav"><div class="navbar-nav ms-auto align-items-lg-center gap-lg-2">
         <a class="desktop-nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" href="{% url 'customers:dashboard' %}">Home</a>
         <a class="desktop-nav-link {% if request.resolver_match.url_name == 'shop' or request.resolver_match.url_name == 'product_detail' %}active{% endif %}" href="{% url 'customers:shop' %}">Shop</a>
@@ -35,7 +34,6 @@
           <span class="shop-brand-copy"><strong>{% if shop %}{{ shop.name }}{% else %}Shop Coin{% endif %}</strong>{% if shop.city %}<small>{{ shop.city }}</small>{% endif %}</span>
         </a>
       {% endwith %}
-      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#shopkeeperNav" aria-label="Toggle navigation"><span class="navbar-toggler-icon"></span></button>
       <div class="collapse navbar-collapse" id="shopkeeperNav"><div class="navbar-nav ms-auto align-items-lg-center gap-lg-2">
         <a class="desktop-nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" href="{% url 'shops:dashboard' %}">Dashboard</a>
         <a class="desktop-nav-link {% if request.resolver_match.url_name == 'products' or request.resolver_match.url_name == 'product_create' or request.resolver_match.url_name == 'product_edit' %}active{% endif %}" href="{% url 'shops:products' %}">Products</a>
@@ -48,7 +46,6 @@
     {% else %}
       <a class="navbar-brand fw-bold text-brand" href="{% url 'core:home' %}"><span class="brand-mark"><i class="fa-solid fa-coins"></i></span> Shop Coin</a>
       {% if user.is_authenticated %}
-        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNav" aria-label="Toggle navigation"><span class="navbar-toggler-icon"></span></button>
         <div class="collapse navbar-collapse" id="mainNav"><div class="navbar-nav ms-auto align-items-lg-center gap-lg-2">
           {% if user.is_superuser %}<a class="nav-link" href="/admin/">Admin</a>{% endif %}
           <form method="post" action="{% url 'accounts:logout' %}" class="d-inline">{% csrf_token %}<button class="btn btn-outline-brand btn-sm" type="submit">Sign out</button></form>

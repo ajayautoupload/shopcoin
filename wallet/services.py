@@ -2,12 +2,12 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Q, Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
-from .models import CoinLedger, CoinRedemption, CoinRule, Wallet, WebsiteEngagement, WebsiteEngagementStats
+from .models import CoinLedger, CoinRedemption, CoinRedemptionRequest, CoinRule, Wallet, WebsiteEngagement, WebsiteEngagementStats
 
 COIN_SLAB_THRESHOLDS = (0, 100, 500)
 COINS_PER_HUNDRED = Decimal('100')
@@ -125,7 +125,7 @@ def get_customer_coin_summary(customer, shop=None):
 
 
 @transaction.atomic
-def redeem_customer_coins(*, shopkeeper, shop, customer_id, idempotency_key, confirmed, reward_description):
+def redeem_customer_coins(*, shopkeeper, shop, customer_id, idempotency_key, confirmed, reward_description, expected_coins=None):
     """Redeem a shop's customer's full active balance once, with an audit ledger row."""
     from accounts.models import CustomerProfile
     from shops.access import shop_is_owned_by
@@ -166,6 +166,11 @@ def redeem_customer_coins(*, shopkeeper, shop, customer_id, idempotency_key, con
     qualifying_bill_count = bills.filter(total_amount__gt=Decimal('1000.00')).count()
     wallet, _ = Wallet.objects.get_or_create(customer=customer)
     wallet = Wallet.objects.select_for_update().get(pk=wallet.pk)
+    if expected_coins is not None and expected_coins > wallet.balance:
+        raise ValidationError(
+            f'Insufficient coin balance: this redemption requests {expected_coins} coins, '
+            f'but only {wallet.balance} are available.'
+        )
     sources = get_coin_source_summary(wallet)
     purchase = sources[CoinLedger.Source.PURCHASE]
     website = sources[CoinLedger.Source.WEBSITE_ENGAGEMENT]
@@ -175,6 +180,13 @@ def redeem_customer_coins(*, shopkeeper, shop, customer_id, idempotency_key, con
     coins = purchase_coins + website_coins
     if coins <= 0:
         raise ValidationError('There are no active coins to clear.')
+    if coins > wallet.balance:
+        raise ValidationError(
+            f'Insufficient coin balance: redemption requires {coins} coins, '
+            f'but only {wallet.balance} are available.'
+        )
+    if expected_coins is not None and coins != expected_coins:
+        raise ValidationError('Eligible wallet balance changed after the request. Create a new request to confirm the current amount.')
     purchase_value = purchase['value'] if purchase_coins else Decimal('0.00')
     website_value = website['value'] if website_coins else Decimal('0.00')
     reward_value = (purchase_value + website_value).quantize(Decimal('0.01'))
@@ -216,6 +228,122 @@ def redeem_customer_coins(*, shopkeeper, shop, customer_id, idempotency_key, con
         )
         remaining = next_balance
     return redemption, True
+
+
+@transaction.atomic
+def create_coin_redemption_request(*, shopkeeper, shop, customer, idempotency_key, source_bill=None, reward_description=''):
+    """Create a two-party request without reserving or deducting wallet coins."""
+    from datetime import timedelta
+    from shops.access import shop_is_owned_by
+    from shops.models import Shop
+    if not shop_is_owned_by(shopkeeper, shop) or customer.connected_shop_id != shop.pk:
+        raise ValidationError('This customer is not connected to your shop.')
+    try:
+        key = UUID(str(idempotency_key))
+    except (ValueError, TypeError, AttributeError):
+        raise ValidationError('The redemption request is invalid. Reload and try again.')
+    existing = CoinRedemptionRequest.objects.filter(idempotency_key=key).first()
+    if existing:
+        if existing.shop_id == shop.pk and existing.customer_id == customer.pk:
+            return existing, False
+        raise ValidationError('This redemption request reference has already been used.')
+    summary = get_customer_coin_summary(customer, shop)
+    if not summary['redeemable_coins']:
+        raise ValidationError('There are no eligible coins to redeem.')
+    try:
+        # Keep the unique-key failure inside a savepoint. PostgreSQL marks the
+        # current transaction as failed after an IntegrityError unless it is
+        # rolled back to a savepoint before querying the winning request.
+        with transaction.atomic():
+            request_obj = CoinRedemptionRequest.objects.create(
+                requested_by=shopkeeper, shop=shop, customer=customer, source_bill=source_bill,
+                idempotency_key=key, coins_requested=summary['redeemable_coins'],
+                reward_value=summary['redeemable_reward_value'],
+                reward_description=(reward_description or '').strip(),
+                expires_at=timezone.now() + timedelta(days=7),
+            )
+    except IntegrityError:
+        existing = CoinRedemptionRequest.objects.filter(idempotency_key=key).first()
+        if existing and existing.shop_id == shop.pk and existing.customer_id == customer.pk:
+            return existing, False
+        raise
+    from notifications.models import InAppNotification
+    from core.translations import translate_ui
+    language = getattr(getattr(customer.user, 'profile', None), 'preferred_language', 'en')
+    notification_title = translate_ui('Coin redemption confirmation', language)
+    notification_template = (
+        f'{shop.name} requests redemption of {request_obj.coins_requested} coins '
+        f'(₹{request_obj.reward_value:.2f}). Only confirm if you personally authorized this. '
+        f'Reference: {request_obj.reference_id}.'
+    )
+    if language == 'hi':
+        notification_template = (
+            f'{shop.name} {request_obj.coins_requested} कॉइन (₹{request_obj.reward_value:.2f}) रिडीम करने का अनुरोध करता है। '
+            f'केवल तभी पुष्टि करें जब आपने स्वयं इसकी अनुमति दी हो। संदर्भ: {request_obj.reference_id}।'
+        )
+    InAppNotification.objects.create(
+        user=customer.user, title=notification_title,
+        message=notification_template,
+        url=f'/customer/redemptions/{request_obj.pk}/confirm/',
+    )
+    return request_obj, True
+
+
+@transaction.atomic
+def confirm_coin_redemption_request(*, request_id, customer, confirm):
+    request_obj = CoinRedemptionRequest.objects.select_for_update().select_related('shop', 'customer__user').filter(pk=request_id, customer=customer).first()
+    if request_obj is None:
+        raise ValidationError('Redemption request not found.')
+    if request_obj.expires_at <= timezone.now() and request_obj.status in (CoinRedemptionRequest.Status.PENDING_CUSTOMER, CoinRedemptionRequest.Status.PENDING_SHOPKEEPER):
+        request_obj.status = CoinRedemptionRequest.Status.EXPIRED
+        request_obj.save(update_fields=('status',))
+        return request_obj
+    if request_obj.status != CoinRedemptionRequest.Status.PENDING_CUSTOMER:
+        raise ValidationError('This request is no longer awaiting your confirmation.')
+    request_obj.status = CoinRedemptionRequest.Status.PENDING_SHOPKEEPER if confirm else CoinRedemptionRequest.Status.REJECTED
+    if confirm:
+        request_obj.customer_confirmed_at = timezone.now()
+    request_obj.save(update_fields=('status', 'customer_confirmed_at'))
+    return request_obj
+
+
+@transaction.atomic
+def finalize_coin_redemption_request(*, request_id, shopkeeper, shop):
+    request_obj = CoinRedemptionRequest.objects.select_for_update().select_related('customer').filter(pk=request_id, shop=shop).first()
+    if request_obj is None:
+        raise ValidationError('Redemption request not found for this shop.')
+    if request_obj.status != CoinRedemptionRequest.Status.PENDING_SHOPKEEPER or request_obj.expires_at <= timezone.now():
+        if request_obj.expires_at <= timezone.now() and request_obj.status == CoinRedemptionRequest.Status.PENDING_SHOPKEEPER:
+            request_obj.status = CoinRedemptionRequest.Status.EXPIRED
+            request_obj.save(update_fields=('status',))
+            return None
+        raise ValidationError('This request is expired or not awaiting final confirmation.')
+    redemption, _ = redeem_customer_coins(
+        shopkeeper=shopkeeper, shop=shop, customer_id=request_obj.customer_id,
+        idempotency_key=request_obj.idempotency_key, confirmed=True,
+        reward_description=request_obj.reward_description or f'Confirmed redemption {request_obj.reference_id}',
+        expected_coins=request_obj.coins_requested,
+    )
+    if redemption.reward_value != request_obj.reward_value:
+        raise ValidationError('Eligible wallet balance changed after the request. Create a new request to confirm the current amount.')
+    redemption.source_bill = request_obj.source_bill
+    redemption.customer_confirmed_at = request_obj.customer_confirmed_at
+    redemption.shopkeeper_confirmed_at = timezone.now()
+    redemption.save(update_fields=('source_bill', 'customer_confirmed_at', 'shopkeeper_confirmed_at'))
+    request_obj.redemption = redemption
+    request_obj.status = CoinRedemptionRequest.Status.COMPLETED
+    request_obj.shopkeeper_confirmed_at = redemption.shopkeeper_confirmed_at
+    request_obj.completed_at = redemption.shopkeeper_confirmed_at
+    request_obj.save(update_fields=('redemption', 'status', 'shopkeeper_confirmed_at', 'completed_at'))
+    from notifications.models import InAppNotification
+    from core.translations import translate_ui
+    language = getattr(getattr(request_obj.customer.user, 'profile', None), 'preferred_language', 'en')
+    title = translate_ui('Coins redeemed', language)
+    message = f'Redemption {request_obj.reference_id} is complete.'
+    if language == 'hi':
+        message = f'रिडेम्पशन {request_obj.reference_id} पूरा हो गया है।'
+    InAppNotification.objects.create(user=request_obj.customer.user, title=title, message=message, url='/customer/wallet/')
+    return redemption
 
 
 @transaction.atomic
