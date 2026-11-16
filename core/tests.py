@@ -8,10 +8,13 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from datetime import timedelta
+from decimal import Decimal
+from uuid import uuid4
 
 from accounts.models import CustomerProfile, ShopkeeperProfile, UserProfile
 from offers.models import ShopAd, ShopOffer
 from shops.models import Product, Shop
+from transactions.models import Bill, Credit
 from wallet.models import Wallet
 
 User = get_user_model()
@@ -40,6 +43,119 @@ class LanguagePreferenceTests(TestCase):
         response = self.client.get(reverse('core:home'))
         self.assertNotContains(response, 'navbar-toggler')
         self.assertContains(response, 'site-preferences')
+
+
+class AdminDashboardTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_superuser('dashboard-admin', 'dashboard@example.test', 'StrongPass!482')
+
+    def test_dashboard_requires_superuser_and_has_only_registered_admin_routes(self):
+        response = self.client.get('/admin/')
+        self.assertRedirects(response, '/admin/login/?next=/admin/')
+
+        customer = User.objects.create_user('dashboard-customer', password='StrongPass!482')
+        UserProfile.objects.create(user=customer, role=UserProfile.Role.CUSTOMER)
+        self.client.force_login(customer)
+        self.assertEqual(self.client.get('/admin/').status_code, 403)
+        staff_user = User.objects.create_user('dashboard-staff', password='StrongPass!482', is_staff=True)
+        self.client.force_login(staff_user)
+        self.assertEqual(self.client.get('/admin/').status_code, 403)
+
+        self.client.force_login(self.admin)
+        response = self.client.get('/admin/')
+        self.assertEqual(response.status_code, 200)
+        changelist = self.client.get('/admin/shops/shop/')
+        self.assertEqual(changelist.status_code, 200)
+        self.assertContains(changelist, 'Shop Coin')
+        self.assertContains(changelist, 'admin-shell.css')
+        self.assertContains(changelist, 'data-language-choice="hi"', html=False)
+        self.assertContains(changelist, 'data-theme-choice="dark"', html=False)
+        for url in (
+            '/admin/accounts/customerprofile/', '/admin/accounts/shopkeeperprofile/',
+            '/admin/shops/shop/', '/admin/shops/product/', '/admin/transactions/bill/',
+            '/admin/transactions/credit/', '/admin/wallet/coinredemptionrequest/',
+            '/admin/notifications/inappnotification/',
+        ):
+            self.assertContains(response, f'href="{url}"', html=False)
+        self.assertContains(response, 'Not configured')
+        self.assertNotContains(response, 'href="#"', html=False)
+
+    def test_dashboard_metrics_use_real_database_records(self):
+        from notifications.models import InAppNotification
+        from wallet.models import CoinLedger, CoinRedemption, CoinRedemptionRequest, WebsiteEngagement
+
+        owner = User.objects.create_user('dashboard-owner', password='StrongPass!482')
+        UserProfile.objects.create(user=owner, role=UserProfile.Role.SHOPKEEPER)
+        ShopkeeperProfile.objects.create(user=owner, phone='9000000001', business_name='Real Business')
+        shop = Shop.objects.create(
+            owner=owner, name='Real Shop', phone='9000000001', address='1 Road',
+            city='Pune', state='Maharashtra', pincode='411001', status=Shop.Status.APPROVED,
+        )
+        customer_user = User.objects.create_user('dashboard-real-customer', password='StrongPass!482', first_name='Customers')
+        UserProfile.objects.create(user=customer_user, role=UserProfile.Role.CUSTOMER)
+        customer = CustomerProfile.objects.create(user=customer_user, connected_shop=shop, phone='9000000002')
+        Wallet.objects.create(customer=customer, balance=12)
+        product = Product.objects.create(shop=shop, name='Real Product', slug='real-product', price='1200.00')
+        bill = Bill.objects.create(
+            bill_number='SC-DASHBOARD-1', idempotency_key=uuid4(), shop=shop, customer=customer,
+            created_by=owner, subtotal=Decimal('1200.00'), total_amount=Decimal('1200.00'),
+        )
+        CoinLedger.objects.create(
+            wallet=customer.wallet, bill=bill, shop=shop, entry_type=CoinLedger.EntryType.EARN,
+            coin_source=CoinLedger.Source.PURCHASE, coin_delta=12, balance_before=0, balance_after=12,
+            coin_value_per_coin=Decimal('10.00'), description='Dashboard metrics fixture',
+        )
+        CoinLedger.objects.create(
+            wallet=customer.wallet, shop=shop, entry_type=CoinLedger.EntryType.EARN,
+            coin_source=CoinLedger.Source.WEBSITE_ENGAGEMENT, coin_delta=3,
+            balance_before=12, balance_after=15, coin_value_per_coin=Decimal('5.00'),
+            description='Dashboard website coin fixture',
+        )
+        CoinRedemption.objects.create(
+            customer=customer, shop=shop, coins_redeemed=2, coin_value_per_coin=Decimal('10.00'),
+            reward_value=Decimal('20.00'), cumulative_shopping=Decimal('1200.00'),
+        )
+        CoinRedemptionRequest.objects.create(
+            customer=customer, shop=shop, requested_by=owner, coins_requested=2,
+            reward_value=Decimal('20.00'), expires_at=timezone.now() + timedelta(days=1),
+        )
+        Credit.objects.create(
+            shop=shop, customer=customer, created_by=owner, original_amount=Decimal('500.00'),
+            paid_amount=Decimal('50.00'), description='Dashboard credit fixture',
+        )
+        WebsiteEngagement.objects.create(customer=customer, shop=shop, visit_date=timezone.localdate())
+        InAppNotification.objects.create(user=self.admin, title='Recorded notification', message='Stored message')
+
+        self.client.force_login(self.admin)
+        response = self.client.get('/admin/')
+        self.assertEqual(response.status_code, 200)
+        values = {card['label']: card['value'] for card in response.context['cards']}
+        self.assertEqual(values['Total Customers'], 1)
+        self.assertEqual(values['Total Shopkeepers'], 1)
+        self.assertEqual(values['Registered Shops'], 1)
+        self.assertEqual(values['Total Products'], 1)
+        self.assertEqual(values['Total Bills'], 1)
+        self.assertEqual(values['Total Sales'], '₹1,200.00')
+        self.assertEqual(values['Purchase Coins Issued'], '12')
+        self.assertEqual(values['Website Coins Issued'], '3')
+        self.assertEqual(values['Coins Redeemed'], '2')
+        self.assertEqual(values['Pending Redemption Requests'], 1)
+        self.assertEqual(values['Outstanding Udhar'], '₹450.00')
+        self.assertEqual(response.context['chart_payload']['shops'][0]['label'], 'Real Shop')
+        self.assertContains(response, '<td data-no-translate>Real Shop</td>', html=False)
+        self.client.cookies['django_language'] = 'hi'
+        hindi_response = self.client.get('/admin/')
+        self.assertContains(hindi_response, '<b data-no-translate>Customers</b>', html=False)
+
+    def test_dashboard_uses_hindi_markup_and_switchable_language(self):
+        self.client.force_login(self.admin)
+        self.client.cookies['django_language'] = 'hi'
+        response = self.client.get('/admin/')
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'डैशबोर्ड')
+        self.assertContains(response, 'data-i18n-key="Dashboard"', html=False)
+        self.assertContains(response, 'data-language-choice="en"', html=False)
+        self.assertContains(response, 'data-theme-choice="dark"', html=False)
 
 
 class DemoSeedCommandTests(TestCase):

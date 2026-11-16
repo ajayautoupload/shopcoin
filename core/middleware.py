@@ -10,11 +10,13 @@ class _HindiHTML(HTMLParser):
     """Translate exact interface text/labels and annotate it for language toggles."""
     translatable_attrs = {'placeholder', 'title', 'aria-label', 'alt'}
     raw_tags = {'script', 'style', 'textarea', 'pre', 'code'}
+    void_tags = {'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'}
 
     def __init__(self):
         super().__init__(convert_charrefs=False)
         self.parts = []
         self.raw_depth = 0
+        self.protected_tags = []
 
     def handle_starttag(self, tag, attrs):
         rendered_attrs = []
@@ -33,6 +35,8 @@ class _HindiHTML(HTMLParser):
         self.parts.append(f'<{tag}{attrs_text}>')
         if tag in self.raw_tags:
             self.raw_depth += 1
+        if tag not in self.void_tags and any(name == 'data-no-translate' for name, _ in attrs):
+            self.protected_tags.append(tag)
 
     def handle_startendtag(self, tag, attrs):
         self.handle_starttag(tag, attrs)
@@ -42,9 +46,12 @@ class _HindiHTML(HTMLParser):
         self.parts.append(f'</{tag}>')
         if tag in self.raw_tags and self.raw_depth:
             self.raw_depth -= 1
+        if tag in self.protected_tags:
+            protected_index = len(self.protected_tags) - 1 - self.protected_tags[::-1].index(tag)
+            self.protected_tags.pop(protected_index)
 
     def handle_data(self, data):
-        if self.raw_depth:
+        if self.raw_depth or self.protected_tags:
             self.parts.append(data)
             return
         key = data.strip()

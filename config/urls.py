@@ -21,9 +21,11 @@ from django.conf import settings
 from django.contrib import admin
 from django.urls import include, path, re_path
 
+from core.admin_dashboard import admin_dashboard
 from core.views import serve_local_media
 
 urlpatterns = [
+    path('admin/', admin_dashboard, name='admin_dashboard'),
     path('admin/', admin.site.urls),
     path('', include('core.urls')),
     path('', include('accounts.urls')),

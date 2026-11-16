@@ -54,6 +54,7 @@
 
   function translateTextNode(node, language) {
     if (!node.parentElement || /^(SCRIPT|STYLE|NOSCRIPT)$/.test(node.parentElement.tagName)) return;
+    if (node.parentElement.closest('[data-no-translate]')) return;
     if (node.dataset.originalText === undefined) node.dataset.originalText = node.nodeValue;
     const original = node.parentElement.dataset.i18nKey || node.dataset.originalText;
     const trimmed = original.trim();
@@ -70,6 +71,7 @@
     }
     if (!(element instanceof Element)) return;
     if (element.matches('script,style,noscript')) return;
+    if (element.closest('[data-no-translate]')) return;
     for (const attribute of translatableAttributes) {
       if (!element.hasAttribute(attribute)) continue;
       const originalName = `original${attribute.replace(/(^|-)(.)/g, (_, __, letter) => letter.toUpperCase())}`;

@@ -1,0 +1,110 @@
+{% load static %}<!doctype html>
+<html lang="{{ request.LANGUAGE_CODE|default:'en' }}">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <meta name="theme-color" content="#ffffff">
+  <title>Admin Dashboard · Shop Coin</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" rel="stylesheet">
+  <link href="{% static 'css/preferences.css' %}" rel="stylesheet">
+  <link href="{% static 'css/admin-dashboard.css' %}" rel="stylesheet">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem('shopcoin-theme')||'light';document.documentElement.lang="{% if user.is_authenticated and user.profile.preferred_language %}{{ user.profile.preferred_language }}{% else %}{{ request.COOKIES.django_language|default:'en' }}{% endif %}"}catch(e){}</script>
+</head>
+<body class="admin-dashboard">
+  <div class="admin-layout">
+    <aside class="admin-sidebar" id="adminSidebar">
+      <a class="admin-brand" href="{% url 'admin_dashboard' %}"><span class="brand-mark"><i class="fa-solid fa-coins"></i></span><span><span data-no-translate>Shop Coin</span><small>ADMIN CONSOLE</small></span></a>
+      <nav class="admin-menu" aria-label="Admin navigation">
+        <p class="menu-heading">Main</p>
+        <a class="menu-link active" href="{% url 'admin_dashboard' %}"><i class="fa-solid fa-gauge-high"></i><span>Dashboard</span></a>
+        <p class="menu-heading">User Management</p>
+        <a class="menu-link" href="{{ quick_links.0.url }}"><i class="fa-solid fa-users"></i><span>All Users</span></a>
+        <a class="menu-link" href="{{ quick_links.1.url }}"><i class="fa-solid fa-user-group"></i><span>Customers</span></a>
+        <a class="menu-link" href="{{ quick_links.2.url }}"><i class="fa-solid fa-user-tie"></i><span>Shopkeepers</span></a>
+        <a class="menu-link" href="{{ quick_links.3.url }}"><i class="fa-solid fa-store"></i><span>Registered Shops</span></a>
+        <p class="menu-heading">Business Management</p>
+        <a class="menu-link" href="{{ quick_links.3.url }}"><i class="fa-solid fa-shop"></i><span>Shops</span></a>
+        <a class="menu-link" href="{{ quick_links.4.url }}"><i class="fa-solid fa-box-open"></i><span>Products</span></a>
+        <a class="menu-link" href="{{ quick_links.5.url }}"><i class="fa-solid fa-receipt"></i><span>Bills</span></a>
+        <a class="menu-link" href="{{ quick_links.6.url }}"><i class="fa-solid fa-money-bill-transfer"></i><span>Payments</span></a>
+        <a class="menu-link" href="{{ quick_links.7.url }}"><i class="fa-solid fa-hand-holding-dollar"></i><span>Udhar / Credit</span></a>
+        <p class="menu-heading">ShopCoin Management</p>
+        <a class="menu-link" href="{{ quick_links.8.url }}"><i class="fa-solid fa-coins"></i><span>Purchase Coin Rules</span></a>
+        <a class="menu-link" href="{{ quick_links.9.url }}"><i class="fa-solid fa-globe"></i><span>Website Coins</span></a>
+        <a class="menu-link" href="{{ quick_links.10.url }}"><i class="fa-solid fa-wallet"></i><span>Coin Wallets</span></a>
+        <a class="menu-link" href="{{ quick_links.11.url }}"><i class="fa-solid fa-circle-check"></i><span>Coin Redemption Requests</span></a>
+        <a class="menu-link" href="{{ quick_links.12.url }}"><i class="fa-solid fa-clock-rotate-left"></i><span>Redemption History</span></a>
+        <a class="menu-link" href="{{ quick_links.13.url }}"><i class="fa-solid fa-list"></i><span>Coin Ledger</span></a>
+        <p class="menu-heading">Engagement &amp; Marketing</p>
+        <a class="menu-link" href="{{ quick_links.14.url }}"><i class="fa-solid fa-chart-line"></i><span>Website Engagement</span></a>
+        <a class="menu-link" href="{{ quick_links.15.url }}"><i class="fa-solid fa-tags"></i><span>Offers</span></a>
+        <a class="menu-link" href="{{ quick_links.16.url }}"><i class="fa-solid fa-rectangle-ad"></i><span>Advertisements</span></a>
+        <a class="menu-link" href="{{ quick_links.17.url }}"><i class="fa-solid fa-bell"></i><span>Notifications</span>{% if unread_notifications %}<b class="menu-count">{{ unread_notifications }}</b>{% endif %}</a>
+        <p class="menu-heading">System</p>
+        <span class="menu-link menu-disabled" aria-disabled="true"><i class="fa-solid fa-chart-pie"></i><span>Reports</span><small>Not configured</small></span>
+        <a class="menu-link" href="{{ profile_url }}"><i class="fa-solid fa-user-gear"></i><span>Admin Profile</span></a>
+        <span class="menu-link menu-disabled" aria-disabled="true"><i class="fa-solid fa-sliders"></i><span>Settings</span><small>Not configured</small></span>
+      </nav>
+      <div class="sidebar-foot"><span class="sidebar-status"></span> Shop Coin platform</div>
+    </aside>
+
+    <div class="admin-main">
+      <header class="admin-topbar">
+        <button class="sidebar-toggle" type="button" aria-label="Toggle navigation" aria-controls="adminSidebar" aria-expanded="false"><i class="fa-solid fa-bars"></i></button>
+        <form class="global-search" method="get" action="{% url 'admin_dashboard' %}" role="search">
+          <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+          <input type="search" name="q" value="{{ query }}" placeholder="Search shops, products, bills or customers" aria-label="Search the platform">
+          <button type="submit">Search</button>
+        </form>
+        <div class="topbar-actions">
+          <a class="top-icon" href="{{ quick_links.17.url }}" aria-label="Notifications"><i class="fa-regular fa-bell"></i>{% if unread_notifications %}<span>{{ unread_notifications }}</span>{% endif %}</a>
+          <details class="site-preferences admin-preferences">
+            <summary aria-label="Language and theme settings"><i class="fa-solid fa-sliders"></i><span>Language &amp; theme</span></summary>
+            <div class="site-preferences-panel"><strong>Language</strong><div class="preference-options"><button type="button" data-language-choice="en">English</button><button type="button" data-language-choice="hi">हिन्दी</button></div><strong>Theme</strong><div class="preference-options"><button type="button" data-theme-choice="light">Light</button><button type="button" data-theme-choice="dark">Dark</button></div></div>
+          </details>
+          <details class="profile-menu"><summary><span class="profile-avatar">{{ user.first_name|default:user.username|first|upper }}</span><span class="profile-copy"><b data-no-translate>{{ user.get_full_name|default:user.username }}</b><small>Administrator</small></span><i class="fa-solid fa-chevron-down"></i></summary><div class="profile-popover"><a href="{{ profile_url }}"><i class="fa-regular fa-user"></i> Profile</a><span class="profile-disabled"><i class="fa-solid fa-gear"></i> Settings · Not configured</span><form method="post" action="{% url 'accounts:logout' %}">{% csrf_token %}<button type="submit"><i class="fa-solid fa-arrow-right-from-bracket"></i> Log out</button></form></div></details>
+        </div>
+      </header>
+
+      <main class="dashboard-content">
+        <div class="page-heading"><div><p class="eyebrow">SHOP COIN / ADMIN</p><h1>Dashboard</h1><p><span>Welcome back,</span> <span data-no-translate>{{ user.get_full_name|default:user.username }}</span>. <span>Here is your platform overview.</span></p></div><a class="button-outline" href="{{ quick_links.0.url }}"><i class="fa-solid fa-users"></i> Browse admin records</a></div>
+
+        {% if query %}<section class="panel-card search-results"><div class="section-title"><div><h2>Search results</h2><p><span>Matching records for</span> “<span data-no-translate>{{ query }}</span>”</p></div><a href="{% url 'admin_dashboard' %}">Clear search</a></div>{% if search_results %}<div class="search-result-grid">{% for result in search_results %}<a class="search-result" href="{{ result.url }}"><span>{{ result.label }}</span><b data-no-translate>{{ result.title }}</b><small data-no-translate>{{ result.description }}</small></a>{% endfor %}</div>{% else %}<div class="empty-state">No matching records found.</div>{% endif %}</section>{% endif %}
+
+        <section class="metrics-grid" aria-label="Platform summary">
+          {% for card in cards %}<a class="metric-card" href="{{ card.url }}"><span class="metric-icon {{ card.tone }}"><i class="fa-solid {{ card.icon }}"></i></span><span class="metric-label">{{ card.label }}</span><strong>{{ card.value }}</strong><small>View details <i class="fa-solid fa-arrow-right"></i></small></a>{% endfor %}
+        </section>
+
+        <section class="panel-card chart-panel">
+          <div class="section-title chart-heading"><div><h2>Business analytics</h2><p>Real platform activity for the selected period</p></div><form class="date-filter" method="get" action="{% url 'admin_dashboard' %}"><label class="visually-hidden" for="periodFilter">Date range</label><select id="periodFilter" name="period"><option value="today" {% if period == 'today' %}selected{% endif %}>Today</option><option value="7d" {% if period == '7d' %}selected{% endif %}>Last 7 Days</option><option value="30d" {% if period == '30d' %}selected{% endif %}>Last 30 Days</option><option value="month" {% if period == 'month' %}selected{% endif %}>This Month</option><option value="custom" {% if period == 'custom' %}selected{% endif %}>Custom Range</option></select><input type="date" name="start" value="{{ start|date:'Y-m-d' }}" aria-label="Start date"><input type="date" name="end" value="{{ end|date:'Y-m-d' }}" aria-label="End date"><button type="submit">Apply</button></form></div>
+          <div class="chart-grid">
+            <article class="chart-card chart-wide"><div class="chart-title"><div><h3>Daily Sales Overview</h3><p>Sales total <b>₹{{ sales_total_window|floatformat:2 }}</b></p></div><span class="chart-legend"><i></i> Sales (₹)</span></div><div class="chart-canvas" data-chart="sales"></div></article>
+            <article class="chart-card"><div class="chart-title"><div><h3>Monthly Sales Overview</h3><p>Completed bills by month</p></div></div><div class="chart-canvas chart-bars" data-chart="monthly"></div></article>
+            <article class="chart-card"><div class="chart-title"><div><h3>New Registrations</h3><p>Customer and shopkeeper signups</p></div></div><div class="chart-canvas" data-chart="registrations"></div></article>
+            <article class="chart-card"><div class="chart-title"><div><h3>Coins Issued vs Redeemed</h3><p>Purchase coins for this period</p></div></div><div class="chart-canvas" data-chart="coins"></div></article>
+            <article class="chart-card"><div class="chart-title"><div><h3>Website Engagement Trends</h3><p>Daily recorded visits</p></div></div><div class="chart-canvas" data-chart="engagement"></div></article>
+            <article class="chart-card chart-wide"><div class="chart-title"><div><h3>Shop-wise Sales Performance</h3><p>Highest sales for selected dates</p></div></div><div class="chart-canvas chart-bars" data-chart="shops"></div></article>
+          </div>
+        </section>
+
+        <section class="quick-links-panel"><div class="section-title"><div><h2>Management shortcuts</h2><p>Open existing platform records and tools</p></div></div><div class="quick-links-grid">{% for link in quick_links %}<a href="{{ link.url }}"><i class="fa-solid {{ link.icon }}"></i><span>{{ link.label }}</span><i class="fa-solid fa-arrow-up-right-from-square"></i></a>{% endfor %}</div></section>
+
+        <div class="records-grid">
+          <section class="panel-card record-panel"><div class="section-title"><div><h2>Recent Customers</h2><p>Newest customer accounts</p></div><a href="{{ quick_links.1.url }}">View all</a></div><label class="table-search"><i class="fa-solid fa-magnifying-glass"></i><input data-table-search="customersTable" placeholder="Search recent customers" aria-label="Search recent customers"></label><div class="table-scroll"><table id="customersTable"><thead><tr><th>Customer</th><th>Mobile</th><th>Joined</th></tr></thead><tbody>{% for customer in recent_customers %}<tr><td><b data-no-translate>{{ customer.user.get_full_name|default:customer.user.username }}</b></td><td data-no-translate>{{ customer.phone|default:'—' }}</td><td>{{ customer.date_joined|date:'d M Y' }}</td></tr>{% empty %}<tr><td colspan="3" class="empty-cell">No customer records yet.</td></tr>{% endfor %}</tbody></table></div></section>
+          <section class="panel-card record-panel"><div class="section-title"><div><h2>Recent Shopkeepers</h2><p>Newest registered shopkeepers</p></div><a href="{{ quick_links.2.url }}">View all</a></div><label class="table-search"><i class="fa-solid fa-magnifying-glass"></i><input data-table-search="shopkeepersTable" placeholder="Search recent shopkeepers" aria-label="Search recent shopkeepers"></label><div class="table-scroll"><table id="shopkeepersTable"><thead><tr><th>Shopkeeper</th><th>Business</th><th>Joined</th></tr></thead><tbody>{% for profile in recent_shopkeepers %}<tr><td><b data-no-translate>{{ profile.user.get_full_name|default:profile.user.username }}</b></td><td data-no-translate>{{ profile.business_name|default:'—' }}</td><td>{{ profile.created_at|date:'d M Y' }}</td></tr>{% empty %}<tr><td colspan="3" class="empty-cell">No shopkeeper records yet.</td></tr>{% endfor %}</tbody></table></div></section>
+          <section class="panel-card record-panel"><div class="section-title"><div><h2>Recent Bills</h2><p>Latest customer bills</p></div><a href="{{ quick_links.5.url }}">View all</a></div><label class="table-search"><i class="fa-solid fa-magnifying-glass"></i><input data-table-search="billsTable" placeholder="Search recent bills" aria-label="Search recent bills"></label><div class="table-scroll"><table id="billsTable"><thead><tr><th>Bill</th><th>Customer</th><th>Shop</th><th>Total</th></tr></thead><tbody>{% for bill in recent_bills %}<tr><td><b data-no-translate>{{ bill.bill_number }}</b></td><td data-no-translate>{{ bill.customer.user.get_full_name|default:bill.customer.phone }}</td><td data-no-translate>{{ bill.shop.name }}</td><td>₹{{ bill.total_amount|floatformat:2 }}</td></tr>{% empty %}<tr><td colspan="4" class="empty-cell">No bills recorded yet.</td></tr>{% endfor %}</tbody></table></div></section>
+          <section class="panel-card record-panel"><div class="section-title"><div><h2>Recent Coin Redemptions</h2><p>Completed redemption history</p></div><a href="{{ quick_links.12.url }}">View all</a></div><label class="table-search"><i class="fa-solid fa-magnifying-glass"></i><input data-table-search="redemptionsTable" placeholder="Search redemptions" aria-label="Search redemptions"></label><div class="table-scroll"><table id="redemptionsTable"><thead><tr><th>Customer</th><th>Shop</th><th>Coins</th><th>Value</th></tr></thead><tbody>{% for redemption in recent_redemptions %}<tr><td><b data-no-translate>{{ redemption.customer.user.get_full_name|default:redemption.customer.phone }}</b></td><td data-no-translate>{{ redemption.shop.name }}</td><td>{{ redemption.coins_redeemed }}</td><td>₹{{ redemption.reward_value|floatformat:2 }}</td></tr>{% empty %}<tr><td colspan="4" class="empty-cell">No redemptions yet.</td></tr>{% endfor %}</tbody></table></div></section>
+          <section class="panel-card record-panel"><div class="section-title"><div><h2>Pending Redemption Requests</h2><p>Awaiting customer or shopkeeper confirmation</p></div><a href="{{ quick_links.11.url }}">View all</a></div><label class="table-search"><i class="fa-solid fa-magnifying-glass"></i><input data-table-search="requestsTable" placeholder="Search pending requests" aria-label="Search pending requests"></label><div class="table-scroll"><table id="requestsTable"><thead><tr><th>Customer</th><th>Shop</th><th>Coins</th><th>Status</th></tr></thead><tbody>{% for item in pending_requests %}<tr><td><b data-no-translate>{{ item.customer.user.get_full_name|default:item.customer.phone }}</b></td><td data-no-translate>{{ item.shop.name }}</td><td>{{ item.coins_requested }}</td><td><span class="status-pill pending">{{ item.get_status_display }}</span></td></tr>{% empty %}<tr><td colspan="4" class="empty-cell">No pending redemption requests.</td></tr>{% endfor %}</tbody></table></div></section>
+          <section class="panel-card record-panel"><div class="section-title"><div><h2>Recent Notifications</h2><p>Latest messages recorded by the platform</p></div><a href="{{ quick_links.17.url }}">View all</a></div><label class="table-search"><i class="fa-solid fa-magnifying-glass"></i><input data-table-search="notificationsTable" placeholder="Search notifications" aria-label="Search notifications"></label><div class="table-scroll"><table id="notificationsTable"><thead><tr><th>Notification</th><th>User</th><th>Time</th></tr></thead><tbody>{% for notification in recent_notifications %}<tr><td><b data-no-translate>{{ notification.title }}</b><small class="table-subtext" data-no-translate>{{ notification.message|truncatechars:70 }}</small></td><td data-no-translate>{{ notification.user.get_full_name|default:notification.user.username }}</td><td>{{ notification.created_at|date:'d M, H:i' }}</td></tr>{% empty %}<tr><td colspan="3" class="empty-cell">No notifications recorded yet.</td></tr>{% endfor %}</tbody></table></div></section>
+        </div>
+        <footer class="admin-footer"><span>© {{ today|date:'Y' }} Shop Coin</span><span>Rewards that bring local shopping closer.</span></footer>
+      </main>
+    </div>
+  </div>
+  <div class="sidebar-backdrop" hidden></div>
+  {{ chart_payload|json_script:'admin-dashboard-data' }}
+  <script src="{% static 'js/admin-dashboard.js' %}" defer></script>
+  <script src="{% static 'js/site-preferences.js' %}" defer></script>
+</body>
+</html>

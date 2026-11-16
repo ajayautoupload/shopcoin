@@ -1,0 +1,20 @@
+{% extends "admin/base.html" %}
+{% load static %}
+{% block title %}{% if subtitle %}{{ subtitle }} · {% endif %}{{ title|default:'Admin' }} · Shop Coin{% endblock %}
+{% block extrahead %}
+  {{ block.super }}
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <link rel="stylesheet" href="{% static 'css/preferences.css' %}">
+  <link rel="stylesheet" href="{% static 'css/admin-shell.css' %}">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem('shopcoin-theme')||'light'}catch(e){}</script>
+{% endblock %}
+{% block branding %}
+  <div id="site-name"><a class="shopcoin-admin-brand" href="{% url 'admin_dashboard' %}"><span class="brand-mark"><i class="fa-solid fa-coins"></i></span>Shop Coin <small>ADMIN</small></a></div>
+{% endblock %}
+{% block nav-global %}
+  <details class="site-preferences admin-shell-preferences">
+    <summary aria-label="Language and theme settings"><i class="fa-solid fa-sliders"></i><span>Language &amp; theme</span></summary>
+    <div class="site-preferences-panel"><strong>Language</strong><div class="preference-options"><button type="button" data-language-choice="en">English</button><button type="button" data-language-choice="hi">हिन्दी</button></div><strong>Theme</strong><div class="preference-options"><button type="button" data-theme-choice="light">Light</button><button type="button" data-theme-choice="dark">Dark</button></div></div>
+  </details>
+{% endblock %}
+{% block extrabody %}{{ block.super }}<script src="{% static 'js/site-preferences.js' %}" defer></script>{% endblock %}

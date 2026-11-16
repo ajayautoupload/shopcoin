@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.db.models import Q, Sum
 from django.utils import timezone
-from .models import CoinLedger, CoinRedemption, CoinRule, CoinValue, Wallet, WebsiteEngagement, WebsiteEngagementStats
+from .models import CoinLedger, CoinRedemption, CoinRedemptionRequest, CoinRule, CoinValue, Wallet, WebsiteEngagement, WebsiteEngagementStats
 
 
 @admin.register(Wallet)
@@ -60,13 +60,30 @@ class CoinRuleAdmin(admin.ModelAdmin):
 
 @admin.register(CoinRedemption)
 class CoinRedemptionAdmin(admin.ModelAdmin):
-    list_display = ('shop', 'customer', 'coins_redeemed', 'purchase_coins_redeemed', 'website_coins_redeemed', 'remaining_coin_balance', 'purchase_reward_value', 'website_reward_value', 'reward_value', 'redeemed_by', 'status', 'redeemed_at')
+    list_display = ('id', 'customer', 'redeemed_by', 'shop', 'coins_redeemed', 'purchase_reward_value', 'website_reward_value', 'reward_value', 'source_bill', 'applied_bill', 'customer_confirmed_at', 'shopkeeper_confirmed_at', 'status', 'redeemed_at')
     list_filter = ('shop', 'status', 'redeemed_at')
     search_fields = ('customer__phone', 'customer__user__first_name', 'customer__user__last_name', 'redeemed_by__username')
-    readonly_fields = ('idempotency_key', 'redeemed_at')
+    readonly_fields = tuple(field.name for field in CoinRedemption._meta.fields)
 
     def has_delete_permission(self, request, obj=None):
         return request.user.is_superuser
+
+
+@admin.register(CoinRedemptionRequest)
+class CoinRedemptionRequestAdmin(admin.ModelAdmin):
+    list_display = ('reference_id', 'customer', 'shop', 'coins_requested', 'reward_value', 'status', 'created_at', 'expires_at')
+    list_filter = ('status', 'shop', 'created_at', 'expires_at')
+    search_fields = ('reference_id', 'customer__phone', 'customer__user__first_name', 'customer__user__last_name', 'shop__name')
+    readonly_fields = tuple(field.name for field in CoinRedemptionRequest._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(WebsiteEngagement)
