@@ -5,6 +5,7 @@ from django.forms import formset_factory
 
 from shops.models import Product
 from wallet.models import CoinRedemption
+from .models import Bill
 
 
 class BillDetailsForm(forms.Form):
@@ -22,12 +23,20 @@ class BillDetailsForm(forms.Form):
     request_coin_redemption = forms.BooleanField(required=False, label='Request coin redemption for a future bill')
     redemption_to_apply = forms.ModelChoiceField(queryset=CoinRedemption.objects.none(), required=False, label='Apply confirmed coins from an earlier bill')
 
-    def __init__(self, *args, shop, customer, **kwargs):
+    def __init__(self, *args, shop, customer, allow_redemption_request=False, allow_redemption_apply=False, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields['redemption_to_apply'].queryset = CoinRedemption.objects.filter(
-            shop=shop, customer=customer, applied_bill__isnull=True,
-            source_bill__isnull=False,
-        ).order_by('-redeemed_at')
+        if allow_redemption_request:
+            self.fields['request_coin_redemption'].initial = False
+        else:
+            self.fields.pop('request_coin_redemption')
+        if allow_redemption_apply:
+            self.fields['redemption_to_apply'].queryset = CoinRedemption.objects.filter(
+                shop=shop, customer=customer, applied_bill__isnull=True,
+                source_bill__isnull=False, source_bill__status=Bill.Status.COMPLETED,
+                status=CoinRedemption.Status.COMPLETED,
+            ).order_by('-redeemed_at')
+        else:
+            self.fields.pop('redemption_to_apply')
 
 
 class BillItemForm(forms.Form):

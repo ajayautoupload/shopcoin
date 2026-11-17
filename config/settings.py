@@ -12,7 +12,9 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 
 from pathlib import Path
 import os
+import logging
 from urllib.parse import parse_qs, unquote, urlparse
+from core.media_storage import resolve_media_storage
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -86,20 +88,30 @@ INSTALLED_APPS = [
     'reports',
 ]
 
-# Use durable object storage for uploaded media when a bucket is configured.
-# Local development keeps Django's filesystem storage by default.
-MEDIA_STORAGE_BUCKET = os.environ.get('AWS_STORAGE_BUCKET_NAME', '').strip()
-MEDIA_STORAGE_ENABLED = bool(
-    MEDIA_STORAGE_BUCKET
-    and os.environ.get('AWS_ACCESS_KEY_ID', '').strip()
-    and os.environ.get('AWS_SECRET_ACCESS_KEY', '').strip()
-)
+MEDIA_STORAGE = resolve_media_storage(os.environ, debug=DEBUG)
+MEDIA_STORAGE_BUCKET = MEDIA_STORAGE['bucket']
+MEDIA_STORAGE_ENABLED = MEDIA_STORAGE['enabled']
+MEDIA_STORAGE_PARTIALLY_CONFIGURED = MEDIA_STORAGE['partial']
+MEDIA_STORAGE_TEMPORARY_FALLBACK = MEDIA_STORAGE['temporary_fallback']
+AWS_QUERYSTRING_AUTH = MEDIA_STORAGE['querystring_auth']
+if MEDIA_STORAGE_TEMPORARY_FALLBACK:
+    logging.getLogger('django').warning(
+        'Permanent media storage is not configured. Using TEMPORARY local filesystem media; '
+        'uploads can disappear when the Render instance restarts or redeploys.'
+    )
+if MEDIA_STORAGE_PARTIALLY_CONFIGURED:
+    logging.getLogger('django').warning(
+        'R2 media storage is only partially configured; using local filesystem media. '
+        'Missing settings: %s', ', '.join(MEDIA_STORAGE['missing']),
+    )
+if MEDIA_STORAGE_ENABLED and not DEBUG and AWS_QUERYSTRING_AUTH:
+    raise RuntimeError('Production media must use stable public URLs; set AWS_QUERYSTRING_AUTH=false.')
 if MEDIA_STORAGE_ENABLED:
     INSTALLED_APPS.append('storages')
 
-AWS_S3_REGION_NAME = os.environ.get('AWS_S3_REGION_NAME', '').strip() or None
-AWS_S3_ENDPOINT_URL = os.environ.get('AWS_S3_ENDPOINT_URL', '').strip() or None
-AWS_S3_CUSTOM_DOMAIN = os.environ.get('AWS_S3_CUSTOM_DOMAIN', '').strip() or None
+AWS_S3_REGION_NAME = MEDIA_STORAGE['region_name']
+AWS_S3_ENDPOINT_URL = MEDIA_STORAGE['endpoint_url']
+AWS_S3_CUSTOM_DOMAIN = MEDIA_STORAGE['custom_domain']
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -226,7 +238,7 @@ STORAGES = {
     'default': {
         'BACKEND': (
             'storages.backends.s3.S3Storage'
-            if MEDIA_STORAGE_ENABLED else 'django.core.files.storage.FileSystemStorage'
+            if MEDIA_STORAGE_ENABLED else MEDIA_STORAGE['backend']
         ),
         **({
             'OPTIONS': {
@@ -236,7 +248,8 @@ STORAGES = {
                 'addressing_style': os.environ.get('AWS_S3_ADDRESSING_STYLE') or None,
                 'custom_domain': AWS_S3_CUSTOM_DOMAIN,
                 'url_protocol': 'https:',
-                'querystring_auth': os.environ.get('AWS_QUERYSTRING_AUTH', 'true').strip().lower() == 'true',
+                'querystring_auth': AWS_QUERYSTRING_AUTH,
+                'signature_version': 's3v4',
                 'default_acl': None,
                 'file_overwrite': False,
             },

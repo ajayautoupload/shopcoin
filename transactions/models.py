@@ -57,6 +57,14 @@ class Bill(models.Model):
     def remaining_amount(self):
         return self.total_amount - self.paid_amount
 
+    @property
+    def coin_redemption_discount(self):
+        return sum((item.reward_value for item in self.applied_redemptions.all()), Decimal('0.00'))
+
+    @property
+    def merchant_discount(self):
+        return max(Decimal('0.00'), self.discount - self.coin_redemption_discount)
+
     def save(self, *args, **kwargs):
         if not self.bill_number and self.shop_id:
             self.bill_number = f'SC{self.shop_id}-{timezone.localtime():%Y%m%d%H%M%S}-{uuid.uuid4().hex[:12].upper()}'

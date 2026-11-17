@@ -273,7 +273,7 @@ def customers(request):
 @shopkeeper_required
 def sales(request):
     shop = get_current_shopkeeper_shop(request.user)
-    bills = Bill.objects.filter(shop=shop).select_related('customer__user').prefetch_related('items') if shop else Bill.objects.none()
+    bills = Bill.objects.filter(shop=shop).select_related('customer__user').prefetch_related('items', 'applied_redemptions') if shop else Bill.objects.none()
     payment_status = request.GET.get('status', '')
     if payment_status in Bill.PaymentStatus.values:
         bills = bills.filter(payment_status=payment_status)
@@ -325,9 +325,18 @@ def create_bill_for_customer(request, customer_id):
     )
     active_tiers = set(CoinRule.objects.filter(shop=shop, is_active=True, purchase_amount__in=(Decimal('1000.00'), Decimal('5000.00'), Decimal('10000.00'))).values_list('purchase_amount', flat=True))
     has_active_coin_rule = active_tiers == {Decimal('1000.00'), Decimal('5000.00'), Decimal('10000.00')}
+    has_previous_bill = Bill.objects.filter(shop=shop, customer=customer, status=Bill.Status.COMPLETED).exists()
+    coin_summary = get_customer_coin_summary(customer, shop) if has_previous_bill else None
+    can_request_redemption = bool(coin_summary and coin_summary['redeemable_coins'] > 0)
+    can_apply_redemption = bool(has_previous_bill and CoinRedemption.objects.filter(
+        shop=shop, customer=customer, status=CoinRedemption.Status.COMPLETED,
+        applied_bill__isnull=True, source_bill__isnull=False,
+        source_bill__status=Bill.Status.COMPLETED,
+    ).exists())
+    form_redemption_options = {'allow_redemption_request': can_request_redemption, 'allow_redemption_apply': can_apply_redemption}
 
     if request.method == 'POST':
-        form = BillDetailsForm(request.POST, shop=shop, customer=customer)
+        form = BillDetailsForm(request.POST, shop=shop, customer=customer, **form_redemption_options)
         item_formset = BillItemFormSet(request.POST, prefix='items', form_kwargs={'shop': shop})
         if form.is_valid() and item_formset.is_valid():
             active_forms = [line for line in item_formset.forms if line.cleaned_data and not line.cleaned_data.get('DELETE')]
@@ -367,18 +376,23 @@ def create_bill_for_customer(request, customer_id):
                     messages.info(request, 'This bill was already submitted. No additional coins were added.')
                     return redirect('shops:bill_detail', bill_id=bill.pk)
     else:
-        form = BillDetailsForm(initial={'idempotency_key': uuid4(), 'discount': Decimal('0.00')}, shop=shop, customer=customer)
+        form = BillDetailsForm(
+            initial={'idempotency_key': uuid4(), 'discount': Decimal('0.00')},
+            shop=shop, customer=customer, **form_redemption_options,
+        )
         item_formset = BillItemFormSet(prefix='items', form_kwargs={'shop': shop})
     return render(request, 'shopkeeper/bill_form.html', {
         'shop': shop, 'customer': customer, 'form': form, 'item_formset': item_formset,
-        'has_active_coin_rule': has_active_coin_rule,
+        'has_active_coin_rule': has_active_coin_rule, 'has_previous_bill': has_previous_bill,
+        'coin_summary': coin_summary, 'can_request_redemption': can_request_redemption,
+        'can_apply_redemption': can_apply_redemption,
     })
 
 
 @shopkeeper_required
 def bill_detail(request, bill_id):
     shop = get_current_shopkeeper_shop(request.user)
-    bill = get_object_or_404(Bill.objects.select_related('shop', 'customer__user', 'coin_rule').prefetch_related('items', 'payments__coin_ledger', 'payments__reversal', 'credits__payments__coin_ledger', 'credits__payments__reversal'), pk=bill_id, shop=shop)
+    bill = get_object_or_404(Bill.objects.select_related('shop', 'customer__user', 'coin_rule').prefetch_related('items', 'applied_redemptions', 'payments__coin_ledger', 'payments__reversal', 'credits__payments__coin_ledger', 'credits__payments__reversal'), pk=bill_id, shop=shop)
     payment_history = [{'payment': payment, 'is_credit_payment': False} for payment in bill.payments.all()]
     for credit in bill.credits.all():
         payment_history.extend({'payment': payment, 'is_credit_payment': True} for payment in credit.payments.all())

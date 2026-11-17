@@ -236,8 +236,16 @@ def create_coin_redemption_request(*, shopkeeper, shop, customer, idempotency_ke
     from datetime import timedelta
     from shops.access import shop_is_owned_by
     from shops.models import Shop
+    from transactions.models import Bill
     if not shop_is_owned_by(shopkeeper, shop) or customer.connected_shop_id != shop.pk:
         raise ValidationError('This customer is not connected to your shop.')
+    eligible_bills = Bill.objects.filter(shop=shop, customer=customer, status=Bill.Status.COMPLETED)
+    if source_bill is not None:
+        if source_bill.shop_id != shop.pk or source_bill.customer_id != customer.pk or source_bill.status != Bill.Status.COMPLETED:
+            raise ValidationError('A redemption request must reference this customer’s completed bill.')
+        eligible_bills = eligible_bills.exclude(pk=source_bill.pk).filter(issued_at__lt=source_bill.issued_at)
+    if not eligible_bills.exists():
+        raise ValidationError('Coin redemption is available after the customer’s first completed bill.')
     try:
         key = UUID(str(idempotency_key))
     except (ValueError, TypeError, AttributeError):

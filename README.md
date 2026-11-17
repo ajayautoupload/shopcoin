@@ -27,18 +27,18 @@ The app uses SQLite by default, or PostgreSQL when `DATABASE_URL` is configured.
 - `DJANGO_ALLOWED_HOSTS`: optional when using the Render-provided hostname; set your hostnames if using a custom domain.
 - `DJANGO_CSRF_TRUSTED_ORIGINS`: optional comma-separated HTTPS origins for custom domains.
 
-Uploaded images are user media, not static files. WhiteNoise serves static assets; it does not serve uploads. When local filesystem media is selected, Django serves its `/media/` URLs in both debug and production mode so uploaded images can load. Render Free's filesystem is still ephemeral, so these local uploads can disappear after a redeploy or restart. The UI shows placeholders when a file is missing, but placeholders cannot recover uploaded files.
+Uploaded images are user media, not static files. WhiteNoise serves static assets; it does not store uploads. Local development uses `MEDIA_ROOT` and `/media/`. Render Free storage is ephemeral, so without R2 the app logs a clear warning and uses temporary local media; uploaded images may disappear after a restart or redeploy. This fallback is not permanent storage.
 
-For persistent uploads on Render Free, configure an S3 bucket or S3-compatible object store. This project switches media uploads to `django-storages` S3 storage only when the bucket name, `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY` are all set. If those credentials are absent, local media storage remains active. Add these Render environment variables and provide an existing bucket plus an IAM/API identity with the required object permissions:
+Cloudflare R2 is the configured provider target. Create an R2 bucket, an S3 API token with object read/write access, and attach a public custom domain to the bucket. On Render, add these variables privately (never put secret values in source control):
 
-- `AWS_STORAGE_BUCKET_NAME`: bucket name.
-- `AWS_S3_REGION_NAME`: bucket region.
-- `AWS_S3_ENDPOINT_URL`: optional endpoint for an S3-compatible provider.
-- `AWS_S3_CUSTOM_DOMAIN`: optional CDN or bucket domain used for media URLs.
-- `AWS_S3_ADDRESSING_STYLE`: optional provider setting, commonly `path` when required.
-- `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`: set privately in Render, never in source control.
+- `AWS_STORAGE_BUCKET_NAME`: R2 bucket name.
+- `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`: R2 S3 token credentials.
+- `AWS_S3_ENDPOINT_URL`: `https://<account-id>.r2.cloudflarestorage.com`.
+- `AWS_S3_CUSTOM_DOMAIN`: custom-domain hostname only, without `https://`.
+- `AWS_S3_REGION_NAME`: defaults to `auto`.
+- `AWS_QUERYSTRING_AUTH`: defaults to `false` so image URLs do not expire.
 
-The bucket can remain private; Django generates signed media URLs by default. `AWS_S3_REGION_NAME` is recommended and `AWS_S3_ENDPOINT_URL` is used for compatible providers. Without all three required storage variables, media stays on local disk and is not durable or served in production. Existing local uploads must be copied to the bucket using their stored relative paths before enabling the bucket, or those database references will point to objects that are not present yet.
+When the complete R2 configuration is present, production uses R2. When it is absent or incomplete, Django starts with filesystem media and logs that uploads are temporary, along with missing setting names for partial configuration. Local development continues using SQLite (unless `DATABASE_URL` is set) and local filesystem media when `DJANGO_DEBUG=true` and no R2 values are supplied. Database settings and existing media paths are unchanged. Before switching an environment with local files, configure the target storage and run `python manage.py sync_media_to_object_storage`; the command skips existing objects, copies matching paths, and keeps local copies. Files already lost from an ephemeral Render instance cannot be recovered by this command and must be restored from a local/backup copy.
 
 Use `bash build.sh` as the build command and `bash start.sh` as the start command. The build script installs requirements and collects static files. It skips migrations on Render because the persistent disk is unavailable during the build; the start script applies migrations after the service disk is mounted, then starts `config.wsgi:application` with Gunicorn. Run a single web-service instance because a disk-backed SQLite database cannot be shared across multiple instances. The local default remains `db.sqlite3` in the project directory.
 

@@ -68,14 +68,14 @@
         {{ form.discount }}
         {% for error in form.discount.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
       </div>
-      <div class="bill-field">
+      {% if can_apply_redemption %}<div class="bill-field">
         <label class="form-label" for="id_redemption_to_apply">Apply confirmed redemption from an earlier bill</label>
         <select name="redemption_to_apply" id="id_redemption_to_apply" class="form-select">
           <option value="">No previous redemption</option>
           {% for redemption in form.fields.redemption_to_apply.queryset %}<option value="{{ redemption.pk }}" data-value="{{ redemption.reward_value }}">{{ redemption.reference_id }} · {{ redemption.coins_redeemed }} coins · ₹{{ redemption.reward_value|floatformat:2 }}</option>{% endfor %}
         </select>
         <div class="form-text">Redemptions requested on this bill cannot be used here.</div>
-      </div>
+      </div>{% endif %}
       <div class="bill-field bill-payment-field">
         <label class="form-label" for="id_payment_received">Payment received (₹)</label>
         {{ form.payment_received }}
@@ -83,6 +83,8 @@
       </div>
       <section class="bill-summary" aria-label="Bill totals">
         <div><span>Subtotal</span><strong>₹<span id="subtotal">0.00</span></strong></div>
+        <div><span>Other discount</span><strong>−₹<span id="merchant-discount">0.00</span></strong></div>
+        <div><span>Coin redemption discount</span><strong>−₹<span id="redemption-discount">0.00</span></strong></div>
         <div class="bill-final-total"><span>Final amount</span><strong>₹<span id="final-total">0.00</span></strong></div>
         <div><span>Remaining amount</span><strong>₹<span id="remaining-total">0.00</span></strong></div>
         <div><span>Payment status</span><strong id="payment-status">Unpaid</strong></div>
@@ -91,11 +93,13 @@
       </section>
     </div>
 
-    <div class="form-check mt-3">
+    {% if can_request_redemption %}<div class="alert alert-success mt-3">
+      Eligible coins available: <strong>{{ coin_summary.redeemable_coins }}</strong> · Reward value: <strong>₹{{ coin_summary.redeemable_reward_value|floatformat:2 }}</strong>.
+    </div><div class="form-check mt-3">
       {{ form.request_coin_redemption }}
       <label class="form-check-label" for="{{ form.request_coin_redemption.id_for_label }}">Request coin redemption for a future bill</label>
       <div class="form-text">This sends the customer a confirmation request. Coins are not deducted now.</div>
-    </div>
+    </div>{% endif %}
 
     <div class="bill-actions">
       <a class="btn btn-outline-secondary" href="{% url 'shops:bills' %}">Cancel</a>
@@ -124,11 +128,13 @@
       subtotal += price * quantity;
     });
     const discountAmount = Number.parseFloat(discount.value) || 0;
-    const redemptionValue = Number.parseFloat(redemptionSelect.selectedOptions[0]?.dataset.value) || 0;
+    const redemptionValue = Number.parseFloat(redemptionSelect?.selectedOptions[0]?.dataset.value) || 0;
     const finalAmount = Math.max(0, subtotal - discountAmount - redemptionValue);
     const received = Math.max(0, Number.parseFloat(paymentReceived.value) || 0);
     const remaining = Math.max(0, finalAmount - received);
     document.getElementById('subtotal').textContent = subtotal.toFixed(2);
+    document.getElementById('merchant-discount').textContent = discountAmount.toFixed(2);
+    document.getElementById('redemption-discount').textContent = redemptionValue.toFixed(2);
     document.getElementById('final-total').textContent = finalAmount.toFixed(2);
     document.getElementById('remaining-total').textContent = remaining.toFixed(2);
     document.getElementById('payment-status').textContent = remaining === 0 ? 'Paid' : received === 0 ? 'Unpaid' : 'Partially paid';
@@ -158,7 +164,7 @@
   rows.addEventListener('input', calculateTotals);
   discount.addEventListener('input', calculateTotals);
   paymentReceived.addEventListener('input', calculateTotals);
-  redemptionSelect.addEventListener('change', calculateTotals);
+  redemptionSelect?.addEventListener('change', calculateTotals);
   rows.addEventListener('change', (event) => {
     if (!event.target.matches('.bill-product-select')) return;
     const selectedOption = event.target.selectedOptions[0];

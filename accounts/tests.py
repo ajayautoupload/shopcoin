@@ -1,8 +1,14 @@
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import TestCase, override_settings
 from django.urls import reverse
+from io import BytesIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from PIL import Image
 
 from .models import CustomerProfile, ShopkeeperProfile, UserProfile
+from shops.models import Shop
 
 User = get_user_model()
 
@@ -81,6 +87,32 @@ class AccountFlowTests(TestCase):
         ShopkeeperProfile.objects.create(user=user, phone='9222333444')
         self.client.force_login(user, backend='django.contrib.auth.backends.ModelBackend')
         self.assertEqual(self.client.get(reverse('shops:dashboard')).status_code, 200)
+
+
+class ShopkeeperAdminProfileTests(TestCase):
+    def test_profile_shows_full_user_contact_and_links_all_owned_shops(self):
+        admin = User.objects.create_superuser('profile-admin', 'admin@example.test', 'StrongPass!482')
+        user = User.objects.create_user(
+            'shop-owner', password='StrongPass!482', first_name='Ajay', last_name='Saini', email='ajay@example.test',
+        )
+        profile = ShopkeeperProfile.objects.create(
+            user=user, phone='9876543210', business_name='Ajay Stores', contact_email='store@example.test',
+        )
+        shop_values = {
+            'owner': user, 'phone': '9876543210', 'address': '1 Main Road', 'city': 'Pune',
+            'state': 'Maharashtra', 'pincode': '411001', 'status': Shop.Status.APPROVED,
+        }
+        first = Shop.objects.create(name='Ajay Fashion', **shop_values)
+        second = Shop.objects.create(name='Ajay Footwear', **shop_values)
+
+        self.client.force_login(admin)
+        response = self.client.get(reverse('admin:accounts_shopkeeperprofile_change', args=(profile.pk,)))
+
+        self.assertEqual(response.status_code, 200)
+        for expected in ('Ajay Saini', '9876543210', 'store@example.test', 'Ajay Fashion', 'Ajay Footwear'):
+            self.assertContains(response, expected)
+        self.assertContains(response, reverse('admin:shops_shop_change', args=(first.pk,)), html=False)
+        self.assertContains(response, reverse('admin:shops_shop_change', args=(second.pk,)), html=False)
 
 
 class DedicatedCustomerLoginTests(TestCase):
@@ -179,3 +211,46 @@ class DedicatedCustomerLoginTests(TestCase):
         shop_page = self.client.get(reverse('customers:shop'))
         self.assertEqual(shop_page.status_code, 200)
         self.assertEqual(shop_page.wsgi_request.user.profile.role, UserProfile.Role.CUSTOMER)
+
+
+class MediaLifecycleTests(TestCase):
+    def make_image(self, filename, color):
+        data = BytesIO()
+        Image.new('RGB', (3, 3), color=color).save(data, format='PNG')
+        return SimpleUploadedFile(filename, data.getvalue(), content_type='image/png')
+
+    def test_upload_replacement_and_delete_clean_up_unreferenced_media(self):
+        with TemporaryDirectory() as media_dir, override_settings(MEDIA_ROOT=media_dir):
+            user = User.objects.create_user('media-customer')
+            profile = CustomerProfile.objects.create(user=user, image=self.make_image('first.png', 'red'))
+            old_name = profile.image.name
+            old_path = Path(media_dir, old_name)
+            self.assertTrue(old_path.exists())
+            shared_user = User.objects.create_user('media-customer-shared')
+            shared_profile = CustomerProfile.objects.create(user=shared_user, image=old_name)
+
+            with self.captureOnCommitCallbacks(execute=True):
+                profile.image = self.make_image('second.png', 'blue')
+                profile.save(update_fields=('image',))
+            new_name = profile.image.name
+            self.assertNotEqual(old_name, new_name)
+            self.assertTrue(old_path.exists())
+            self.assertTrue(Path(media_dir, new_name).exists())
+
+            with self.captureOnCommitCallbacks(execute=True):
+                shared_profile.delete()
+            self.assertFalse(old_path.exists())
+
+            with self.captureOnCommitCallbacks(execute=True):
+                profile.delete()
+            self.assertFalse(Path(media_dir, new_name).exists())
+
+    def test_public_object_storage_returns_stable_nonexpiring_media_url(self):
+        from storages.backends.s3 import S3Storage
+        storage = S3Storage(
+            bucket_name='shopcoin-test-bucket', region_name='auto',
+            endpoint_url='https://account.r2.cloudflarestorage.com',
+            custom_domain='media.example.test', querystring_auth=False, url_protocol='https:',
+        )
+        url = storage.url('products/example.png')
+        self.assertEqual(url, 'https://media.example.test/products/example.png')

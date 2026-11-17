@@ -195,6 +195,28 @@ class BillFlowTests(TestCase):
         self.client.force_login(self.customer_user)
         self.assertContains(self.client.get(reverse('customers:bill_detail', args=[bill.pk])), 'Outstanding:')
 
+    def test_first_bill_hides_redemption_controls_and_existing_customer_balance_enables_request(self):
+        self.client.force_login(self.owner)
+        url = reverse('shops:create_bill_for_customer', args=[self.customer.pk])
+        first_page = self.client.get(url)
+        self.assertEqual(first_page.status_code, 200)
+        self.assertNotIn('redemption_to_apply', first_page.context['form'].fields)
+        self.assertNotIn('request_coin_redemption', first_page.context['form'].fields)
+
+        self.create_paid_bill(total='1000.00', payment_received='1000.00')
+        later_page = self.client.get(url)
+        self.assertEqual(later_page.status_code, 200)
+        self.assertContains(later_page, 'Eligible coins available:')
+        self.assertContains(later_page, 'Request coin redemption for a future bill')
+
+    def test_redemption_request_is_rejected_before_any_completed_bill(self):
+        from wallet.services import create_coin_redemption_request
+        with self.assertRaisesMessage(ValidationError, 'after the customer’s first completed bill'):
+            create_coin_redemption_request(
+                shopkeeper=self.owner, shop=self.shop, customer=self.customer,
+                idempotency_key=uuid4(),
+            )
+
     def test_bill_payment_reversal_creates_audit_entry_and_restores_udhar(self):
         from transactions.credit_services import reverse_bill_payment
         bill, _ = self.create_paid_bill(total='5000.00', payment_received='3000.00')
@@ -485,7 +507,13 @@ class BillFlowTests(TestCase):
         redemption.refresh_from_db()
         self.assertEqual(redemption.applied_bill_id, later_bill.pk)
         self.assertEqual(later_bill.discount, Decimal('200.00'))
+        self.assertEqual(later_bill.coin_redemption_discount, Decimal('200.00'))
+        self.assertEqual(later_bill.merchant_discount, Decimal('0.00'))
         self.assertEqual(CoinLedger.objects.filter(redemption=redemption, bill=later_bill).count(), 1)
+        self.client.force_login(self.owner)
+        self.assertContains(self.client.get(reverse('shops:bill_detail', args=[later_bill.pk])), 'Coin redemption discount')
+        self.client.force_login(self.customer_user)
+        self.assertContains(self.client.get(reverse('customers:bill_detail', args=[later_bill.pk])), '₹200.00')
 
 
     def test_all_nine_slab_examples(self):

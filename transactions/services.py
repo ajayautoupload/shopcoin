@@ -57,6 +57,8 @@ def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, ite
         applied_redemption = CoinRedemption.objects.select_for_update().filter(
             pk=getattr(redemption_to_apply, 'pk', redemption_to_apply), shop=shop,
             customer=customer, applied_bill__isnull=True, status=CoinRedemption.Status.COMPLETED,
+            source_bill__isnull=False, source_bill__status=Bill.Status.COMPLETED,
+            source_bill__shop=shop, source_bill__customer=customer,
         ).first()
         if applied_redemption is None:
             raise ValidationError('This confirmed redemption is no longer available for this bill.')

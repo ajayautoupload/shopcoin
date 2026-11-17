@@ -20,6 +20,44 @@ from wallet.models import Wallet
 User = get_user_model()
 
 
+class MediaStorageConfigurationTests(TestCase):
+    def test_production_without_r2_selects_temporary_filesystem_fallback(self):
+        from core.media_storage import resolve_media_storage
+        result = resolve_media_storage({}, debug=False)
+        self.assertFalse(result['enabled'])
+        self.assertTrue(result['temporary_fallback'])
+        self.assertEqual(result['backend'], 'django.core.files.storage.FileSystemStorage')
+
+    def test_local_development_without_r2_keeps_normal_filesystem_media(self):
+        from core.media_storage import resolve_media_storage
+        result = resolve_media_storage({}, debug=True)
+        self.assertFalse(result['enabled'])
+        self.assertFalse(result['temporary_fallback'])
+        self.assertEqual(result['backend'], 'django.core.files.storage.FileSystemStorage')
+
+    def test_complete_r2_configuration_selects_s3_storage(self):
+        from core.media_storage import MEDIA_STORAGE_ENV_VARS, resolve_media_storage
+        values = {
+            'AWS_STORAGE_BUCKET_NAME': 'bucket',
+            'AWS_ACCESS_KEY_ID': 'test-access-key',
+            'AWS_SECRET_ACCESS_KEY': 'test-secret-key',
+            'AWS_S3_ENDPOINT_URL': 'https://account.r2.cloudflarestorage.com',
+            'AWS_S3_CUSTOM_DOMAIN': 'media.example.test',
+        }
+        self.assertEqual(set(values), set(MEDIA_STORAGE_ENV_VARS))
+        result = resolve_media_storage(values, debug=False)
+        self.assertTrue(result['enabled'])
+        self.assertFalse(result['temporary_fallback'])
+        self.assertEqual(result['backend'], 'storages.backends.s3.S3Storage')
+
+    def test_partial_r2_configuration_falls_back_and_names_missing_settings(self):
+        from core.media_storage import resolve_media_storage
+        result = resolve_media_storage({'AWS_STORAGE_BUCKET_NAME': 'bucket'}, debug=False)
+        self.assertTrue(result['partial'])
+        self.assertTrue(result['temporary_fallback'])
+        self.assertIn('AWS_S3_CUSTOM_DOMAIN', result['missing'])
+
+
 class LanguagePreferenceTests(TestCase):
     def test_language_choice_is_saved_to_user_and_cookie(self):
         user = User.objects.create_user('language-user', password='StrongPass!482')

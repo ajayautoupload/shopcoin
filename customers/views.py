@@ -87,7 +87,7 @@ def website_engagement_heartbeat(request):
 @customer_required
 def shopping_history(request):
     profile = request.user.customer_profile
-    bills = Bill.objects.filter(customer=profile).select_related('shop').prefetch_related('items')
+    bills = Bill.objects.filter(customer=profile).select_related('shop').prefetch_related('items', 'applied_redemptions')
     summary = bills.filter(status=Bill.Status.COMPLETED).aggregate(total_spent=Coalesce(Sum('total_amount'), Decimal('0.00')), total_bills=Count('pk', distinct=True), total_coins=Coalesce(Sum('coins_earned'), 0), reward_value=Coalesce(Sum('coin_value_amount'), Decimal('0.00')))
     coin_summary = get_customer_coin_summary(profile)
     summary.update(active_coins=coin_summary['active_coins'], current_reward_value=coin_summary['current_reward_value'])
@@ -97,7 +97,7 @@ def shopping_history(request):
 
 @customer_required
 def bill_detail(request, bill_id):
-    bill = get_object_or_404(Bill.objects.select_related('shop', 'coin_rule').prefetch_related('items', 'payments__coin_ledger', 'payments__reversal', 'credits__payments__coin_ledger', 'credits__payments__reversal'), pk=bill_id, customer=request.user.customer_profile)
+    bill = get_object_or_404(Bill.objects.select_related('shop', 'coin_rule').prefetch_related('items', 'applied_redemptions', 'payments__coin_ledger', 'payments__reversal', 'credits__payments__coin_ledger', 'credits__payments__reversal'), pk=bill_id, customer=request.user.customer_profile)
     payment_history = [{'payment': payment, 'is_credit_payment': False} for payment in bill.payments.all()]
     for credit in bill.credits.all():
         payment_history.extend({'payment': payment, 'is_credit_payment': True} for payment in credit.payments.all())
