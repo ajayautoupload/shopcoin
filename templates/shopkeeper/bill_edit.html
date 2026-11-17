@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+{% block title %}Edit bill {{ bill.bill_number }} · Shop Coin{% endblock %}
+{% block content %}
+<div class="container app-shell py-4">
+  <a class="back-link" href="{% url 'shops:bill_detail' bill.pk %}"><i class="fa-solid fa-arrow-left"></i> Back to bill</a>
+  <section class="panel-card mt-3">
+    <span class="eyebrow">{{ bill.shop.name }}</span>
+    <h1 class="h3">Edit bill {{ bill.bill_number }}</h1>
+    <p>Customer: {{ bill.customer.user.get_full_name|default:'Customer' }} · {{ bill.customer.phone }}</p>
+    <p class="text-muted">Edit window closes {{ edit_deadline|date:'d M Y, H:i:s' }}. Final amount must remain ₹{{ bill.total_amount|floatformat:2 }} in this phase.</p>
+    {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+    <form method="post" novalidate>
+      {% csrf_token %}
+      {{ item_formset.management_form }}
+      {% for item_form in item_formset %}
+      <div class="border rounded-4 p-3 mb-3">
+        {% for hidden in item_form.hidden_fields %}{{ hidden }}{% endfor %}
+        {% if item_form.non_field_errors %}<div class="text-danger">{{ item_form.non_field_errors }}</div>{% endif %}
+        <div class="row g-3">
+          <div class="col-12 col-md-4"><label class="form-label">Catalog product (optional)</label>{{ item_form.product }}{{ item_form.product.errors }}</div>
+          <div class="col-12 col-md-4"><label class="form-label">Product name</label>{{ item_form.product_name }}{{ item_form.product_name.errors }}</div>
+          <div class="col-6 col-md-2"><label class="form-label">Quantity</label>{{ item_form.quantity }}{{ item_form.quantity.errors }}</div>
+          <div class="col-6 col-md-2"><label class="form-label">Price (₹)</label>{{ item_form.unit_price }}{{ item_form.unit_price.errors }}</div>
+          <div class="col-12"><label class="form-check-label">{{ item_form.DELETE }} Remove this line</label></div>
+        </div>
+      </div>
+      {% endfor %}
+      <div class="mb-3"><label class="form-label" for="id_discount">Bill discount (₹)</label>{{ form.discount }}{{ form.discount.errors }}</div>
+      <div class="mb-3"><label class="form-label" for="id_reason">Edit reason (required)</label>{{ form.reason }}{{ form.reason.errors }}</div>
+      <div class="bill-customer-summary mb-3">
+        <p>Current total <strong>₹{{ bill.total_amount|floatformat:2 }}</strong></p>
+        <p>Paid <strong>₹{{ bill.paid_amount|floatformat:2 }}</strong></p>
+        <p>Existing payment, Udhar and coin records are retained.</p>
+      </div>
+      <div class="d-flex flex-wrap gap-2"><a class="btn btn-outline-brand" href="{% url 'shops:bill_detail' bill.pk %}">Cancel</a><button class="btn btn-brand" type="submit">Save bill correction</button></div>
+    </form>
+  </section>
+</div>
+{% endblock %}

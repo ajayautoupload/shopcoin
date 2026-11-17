@@ -20,15 +20,19 @@ class BillDetailsForm(forms.Form):
         max_digits=12, decimal_places=2,
         widget=forms.NumberInput(attrs={'class': 'form-control', 'step': '0.01', 'min': '0', 'value': '0'}),
     )
-    request_coin_redemption = forms.BooleanField(required=False, label='Request coin redemption for a future bill')
+    redemption_coins = forms.IntegerField(
+        required=False, min_value=0, initial=0, label='Apply ShopCoin redemption',
+        widget=forms.NumberInput(attrs={'class': 'form-control', 'min': '0', 'step': '1', 'value': '0', 'id': 'id_redemption_coins'}),
+    )
     redemption_to_apply = forms.ModelChoiceField(queryset=CoinRedemption.objects.none(), required=False, label='Apply confirmed coins from an earlier bill')
 
-    def __init__(self, *args, shop, customer, allow_redemption_request=False, allow_redemption_apply=False, **kwargs):
+    def __init__(self, *args, shop, customer, available_redemption_coins=0, allow_redemption_apply=False, **kwargs):
         super().__init__(*args, **kwargs)
-        if allow_redemption_request:
-            self.fields['request_coin_redemption'].initial = False
+        if available_redemption_coins:
+            self.fields['redemption_coins'].max_value = available_redemption_coins
+            self.fields['redemption_coins'].widget.attrs['max'] = available_redemption_coins
         else:
-            self.fields.pop('request_coin_redemption')
+            self.fields.pop('redemption_coins')
         if allow_redemption_apply:
             self.fields['redemption_to_apply'].queryset = CoinRedemption.objects.filter(
                 shop=shop, customer=customer, applied_bill__isnull=True,
@@ -37,6 +41,18 @@ class BillDetailsForm(forms.Form):
             ).order_by('-redeemed_at')
         else:
             self.fields.pop('redemption_to_apply')
+
+
+class BillEditForm(forms.Form):
+    reason = forms.CharField(
+        required=True, max_length=500, label='Edit reason',
+        widget=forms.Textarea(attrs={'class': 'form-control', 'rows': 3, 'maxlength': '500'}),
+    )
+    discount = forms.DecimalField(
+        required=False, initial=Decimal('0.00'), min_value=Decimal('0.00'),
+        max_digits=12, decimal_places=2, label='Bill discount (₹)',
+        widget=forms.NumberInput(attrs={'class': 'form-control', 'step': '0.01', 'min': '0'}),
+    )
 
 
 class BillItemForm(forms.Form):

@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+{% block title %}Notifications · Shop Coin{% endblock %}
+{% block content %}
+<div class="container app-shell py-4">
+  <header class="page-heading"><span class="eyebrow">Shop Coin</span><h1>Notifications</h1><p>Your recent account and bill updates.</p></header>
+  <section class="rules-card notification-list" aria-label="Notifications">
+    {% for notification in notifications %}
+      <article class="notification-card {% if not notification.read_at %}notification-unread{% endif %}">
+        <div class="d-flex justify-content-between align-items-start gap-3">
+          <div><strong>{{ notification.title }}</strong>{% if not notification.read_at %}<span class="badge text-bg-success ms-2">Unread</span>{% else %}<span class="badge text-bg-light ms-2">Read</span>{% endif %}</div>
+          <time class="small text-muted" datetime="{{ notification.created_at|date:'c' }}">{{ notification.created_at|date:'d M Y, H:i' }}</time>
+        </div>
+        <p class="notification-message mt-2 mb-2">{{ notification.message|linebreaksbr }}</p>
+        {% with redemption_request=notification.redemption_request %}
+          {% if notification.can_respond %}
+            <form method="post" action="{% url 'customers:confirm_redemption' redemption_request.pk %}" class="d-flex flex-wrap gap-2 mb-2">
+              {% csrf_token %}<input type="hidden" name="notification_id" value="{{ notification.pk }}">
+              <button class="btn btn-brand btn-sm" name="decision" value="confirm" type="submit">Yes, It's Me</button>
+              <button class="btn btn-outline-danger btn-sm" name="decision" value="reject" type="submit">Reject</button>
+            </form>
+          {% endif %}
+        {% endwith %}
+        {% if notification.url %}<form method="post" action="{% url 'customers:open_notification' notification.pk %}">{% csrf_token %}<button class="btn btn-outline-brand btn-sm" type="submit">Open notification</button></form>{% endif %}
+      </article>
+    {% empty %}
+      <div class="empty-shop-card compact-empty"><i class="fa-regular fa-bell"></i><p>No notifications yet.</p><span>New bill updates will appear here.</span></div>
+    {% endfor %}
+  </section>
+</div>
+{% endblock %}

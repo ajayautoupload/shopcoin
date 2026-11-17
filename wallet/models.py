@@ -130,6 +130,7 @@ class CoinRedemptionRequest(models.Model):
         COMPLETED = 'COMPLETED', 'Completed'
         REJECTED = 'REJECTED', 'Rejected'
         EXPIRED = 'EXPIRED', 'Expired'
+        CANCELLED = 'CANCELLED', 'Cancelled'
 
     reference_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     idempotency_key = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
@@ -137,9 +138,15 @@ class CoinRedemptionRequest(models.Model):
     shop = models.ForeignKey('shops.Shop', on_delete=models.CASCADE, related_name='redemption_requests')
     requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='created_redemption_requests')
     source_bill = models.ForeignKey('transactions.Bill', on_delete=models.SET_NULL, null=True, blank=True, related_name='coin_redemption_requests')
+    requested_bill = models.OneToOneField('transactions.Bill', on_delete=models.SET_NULL, null=True, blank=True, related_name='coin_redemption_request')
     redemption = models.OneToOneField(CoinRedemption, on_delete=models.SET_NULL, null=True, blank=True, related_name='confirmation_request')
     coins_requested = models.PositiveIntegerField()
+    purchase_coins_requested = models.PositiveIntegerField(default=0)
+    website_coins_requested = models.PositiveIntegerField(default=0)
     reward_value = models.DecimalField(max_digits=12, decimal_places=2)
+    purchase_reward_value = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    website_reward_value = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    pending_payment_received = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     reward_description = models.TextField(blank=True)
     status = models.CharField(max_length=24, choices=Status.choices, default=Status.PENDING_CUSTOMER, db_index=True)
     customer_confirmed_at = models.DateTimeField(null=True, blank=True)

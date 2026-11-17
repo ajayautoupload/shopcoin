@@ -1,21 +1,28 @@
 from django.contrib import admin
 from django.contrib import messages
 from django.core.exceptions import ValidationError
-from .models import Bill, BillItem, BillPayment, BillPaymentReversal, Credit, CreditPayment, CreditPaymentReversal
+from .models import Bill, BillEditHistory, BillItem, BillPayment, BillPaymentReversal, Credit, CreditPayment, CreditPaymentReversal
 from .services import set_bill_status
 from .credit_services import reverse_bill_payment, reverse_credit_payment
 
 class BillItemInline(admin.TabularInline):
     model = BillItem
     extra = 0
-    readonly_fields = ('line_total',)
+    fields = ('product', 'product_name', 'quantity', 'unit_price', 'line_total')
+    readonly_fields = fields
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 @admin.register(Bill)
 class BillAdmin(admin.ModelAdmin):
     list_display = ('bill_number', 'shop', 'customer', 'total_amount', 'coins_earned', 'status', 'issued_at')
     list_filter = ('shop', 'status', 'issued_at')
     search_fields = ('bill_number', 'customer__phone', 'customer__user__first_name', 'customer__user__last_name')
-    readonly_fields = ('bill_number', 'idempotency_key', 'issued_at', 'wallet_balance_before', 'wallet_balance_after')
+    readonly_fields = tuple(field.name for field in Bill._meta.fields if field.name != 'status')
     inlines = (BillItemInline,)
 
     def save_model(self, request, obj, form, change):
@@ -29,10 +36,39 @@ class BillAdmin(admin.ModelAdmin):
                     messages.error(request, ' '.join(error.messages))
         super().save_model(request, obj, form, change)
 
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(BillEditHistory)
+class BillEditHistoryAdmin(admin.ModelAdmin):
+    list_display = ('bill_number', 'edited_by', 'edited_at')
+    search_fields = ('bill_number', 'edited_by__username', 'reason')
+    readonly_fields = tuple(field.name for field in BillEditHistory._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
 @admin.register(BillItem)
 class BillItemAdmin(admin.ModelAdmin):
     list_display = ('product_name', 'bill', 'quantity', 'unit_price', 'line_total')
     search_fields = ('product_name', 'bill__bill_number')
+    readonly_fields = tuple(field.name for field in BillItem._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.action(description='Reverse selected credit payment(s) with audit entries')

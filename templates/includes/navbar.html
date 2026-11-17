@@ -1,4 +1,4 @@
-{% load static %}
+{% load static notification_tags %}
 <nav class="navbar navbar-expand-lg bg-white border-bottom sticky-top">
   <div class="container">
     {% if request.path == '/login/' or request.path == '/customer/login/' %}
@@ -19,6 +19,10 @@
           <span class="shop-brand-copy"><strong>{% if connected_shop %}{{ connected_shop.name }}{% else %}Shop Coin{% endif %}</strong>{% if connected_shop.city %}<small>{{ connected_shop.city }}</small>{% endif %}</span>
         </a>
       {% endwith %}
+      <a class="notification-bell ms-auto ms-lg-2" href="{% url 'customers:notification_inbox' %}" aria-label="Notifications">
+        <i class="fa-regular fa-bell" aria-hidden="true"></i><span class="visually-hidden">Notifications</span>
+        {% unread_notification_count as unread_count %}{% if unread_count %}<span class="notification-badge">{{ unread_count }}</span>{% endif %}
+      </a>
       <div class="collapse navbar-collapse" id="customerNav"><div class="navbar-nav ms-auto align-items-lg-center gap-lg-2">
         <a class="desktop-nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" href="{% url 'customers:dashboard' %}">Home</a>
         <a class="desktop-nav-link {% if request.resolver_match.url_name == 'shop' or request.resolver_match.url_name == 'product_detail' %}active{% endif %}" href="{% url 'customers:shop' %}">Shop</a>

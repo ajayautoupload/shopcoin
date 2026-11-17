@@ -10,9 +10,9 @@ from django.utils import timezone
 from accounts.models import CustomerProfile
 from shops.access import shop_is_owned_by
 from shops.models import Product
-from wallet.models import CoinLedger, CoinRedemption, Wallet
+from wallet.models import CoinLedger, CoinRedemption, CoinRedemptionRequest, Wallet
 from wallet.models import CoinRule
-from wallet.services import COINS_PER_HUNDRED, calculate_coins_for_purchase, get_coin_source_summary
+from wallet.services import COINS_PER_HUNDRED, calculate_coins_for_purchase, create_bill_coin_redemption_request, get_coin_source_summary
 
 from .models import Bill, BillItem, BillPayment, Credit
 
@@ -21,12 +21,18 @@ CENT = Decimal('0.01')
 
 
 @transaction.atomic
-def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, items, payment_received=None, redemption_to_apply=None):
+def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, items, payment_received=None, redemption_to_apply=None, redemption_coins=0):
     try:
         key = UUID(str(idempotency_key))
         discount = Decimal(discount).quantize(CENT)
     except (ValueError, TypeError, InvalidOperation):
         raise ValidationError('The bill form is invalid. Reload it and try again.')
+    try:
+        redemption_coins = int(redemption_coins or 0)
+    except (ValueError, TypeError):
+        raise ValidationError('Enter a valid number of ShopCoins to redeem.')
+    if redemption_coins < 0:
+        raise ValidationError('ShopCoin redemption quantity cannot be negative.')
 
     existing = Bill.objects.select_for_update().filter(idempotency_key=key).first()
     if existing:
@@ -101,6 +107,8 @@ def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, ite
         raise ValidationError('Add at least one product to the bill.')
     if applied_redemption:
         discount += applied_redemption.reward_value
+    if applied_redemption and redemption_coins:
+        raise ValidationError('Choose either an earlier confirmed redemption or ShopCoin redemption for this bill, not both.')
     if discount > subtotal:
         raise ValidationError('Discount cannot be greater than the subtotal.')
 
@@ -139,6 +147,23 @@ def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, ite
     balance_after = balance_before + coins_earned
     value_per_coin = rule.coin_value_per_coin if rule else Decimal('0.00')
     coin_value_amount = (Decimal(coins_earned) * value_per_coin).quantize(CENT) if value_per_coin is not None else Decimal('0.00')
+
+    if redemption_coins:
+        bill = Bill.objects.create(
+            bill_number=f'SC{shop.pk}-{timezone.localtime():%Y%m%d%H%M%S}-{key.hex[:12].upper()}',
+            idempotency_key=key, shop=shop, customer=customer, created_by=shopkeeper,
+            subtotal=subtotal, discount=discount, total_amount=total_amount,
+            paid_amount=Decimal('0.00'), payment_status=Bill.PaymentStatus.UNPAID,
+            coins_earned=0, coin_value_amount=Decimal('0.00'),
+            wallet_balance_before=balance_before, wallet_balance_after=balance_before,
+            status=Bill.Status.PENDING_REDEMPTION,
+        )
+        BillItem.objects.bulk_create([BillItem(bill=bill, **line) for line in normalized_items])
+        create_bill_coin_redemption_request(
+            shopkeeper=shopkeeper, shop=shop, customer=customer, bill=bill,
+            requested_coins=redemption_coins, payment_received=payment_received,
+        )
+        return bill, True
 
     now = timezone.localtime()
     bill_number = f'SC{shop.pk}-{now:%Y%m%d%H%M%S}-{key.hex[:12].upper()}'
@@ -197,6 +222,8 @@ def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, ite
             original_amount=outstanding, description=f'Outstanding from bill {bill.bill_number}',
             reference=bill.bill_number,
         )
+    from notifications.services import create_purchase_thank_you_notification
+    create_purchase_thank_you_notification(bill=bill)
     return bill, True
 
 
@@ -208,6 +235,21 @@ def set_bill_status(*, bill_id, status):
         raise ValidationError('Bills can only be moved to cancelled or refunded status here.')
     if bill.status == status:
         return bill, False
+    if bill.status == Bill.Status.PENDING_REDEMPTION:
+        if status != Bill.Status.CANCELLED:
+            raise ValidationError('A pending redemption bill has no payment to refund; cancel it instead.')
+        requests = CoinRedemptionRequest.objects.filter(
+            requested_bill=bill,
+            status__in=(CoinRedemptionRequest.Status.PENDING_CUSTOMER, CoinRedemptionRequest.Status.PENDING_SHOPKEEPER),
+        )
+        request_obj = requests.select_for_update().first()
+        requests.update(status=CoinRedemptionRequest.Status.CANCELLED)
+        bill.status = Bill.Status.CANCELLED
+        bill.save(update_fields=('status',))
+        if request_obj:
+            from notifications.services import create_bill_redemption_notification
+            create_bill_redemption_notification(redemption_request=request_obj, event='cancelled')
+        return bill, True
     if bill.status != Bill.Status.COMPLETED:
         raise ValidationError('A cancelled or refunded bill cannot be changed again.')
 

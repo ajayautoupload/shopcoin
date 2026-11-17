@@ -8,6 +8,7 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_http_methods
 from django.utils import timezone
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.decorators import method_decorator
 from accounts.decorators import customer_required
 from accounts.forms import CustomerProfileForm, NotificationSettingsForm, PrivacySettingsForm
@@ -102,7 +103,20 @@ def bill_detail(request, bill_id):
     for credit in bill.credits.all():
         payment_history.extend({'payment': payment, 'is_credit_payment': True} for payment in credit.payments.all())
     payment_history.sort(key=lambda item: item['payment'].created_at)
-    return render(request, 'customer/bill_detail.html', {'bill': bill, 'payment_history': payment_history})
+    from wallet.models import CoinRedemptionRequest
+    redemption_request = CoinRedemptionRequest.objects.select_related('shop').filter(requested_bill=bill).first()
+    redemption_final_amount = bill.total_amount - redemption_request.reward_value if redemption_request and bill.status == Bill.Status.PENDING_REDEMPTION else None
+    redemption_expired = bool(
+        redemption_request
+        and redemption_request.status in (CoinRedemptionRequest.Status.PENDING_CUSTOMER, CoinRedemptionRequest.Status.PENDING_SHOPKEEPER)
+        and redemption_request.expires_at <= timezone.now()
+    )
+    return render(request, 'customer/bill_detail.html', {
+        'bill': bill, 'payment_history': payment_history,
+        'redemption_request': redemption_request,
+        'redemption_final_amount': redemption_final_amount,
+        'redemption_expired': redemption_expired,
+    })
 
 
 @customer_required
@@ -137,10 +151,15 @@ def wallet(request):
 @require_POST
 def confirm_redemption(request, request_id):
     profile = request.user.customer_profile
+    decision = request.POST.get('decision')
+    if decision not in ('confirm', 'reject'):
+        messages.error(request, 'Choose whether to approve or reject this redemption request.')
+        return redirect('customers:wallet')
+    redemption_request = None
     try:
         redemption_request = confirm_coin_redemption_request(
             request_id=request_id, customer=profile,
-            confirm=request.POST.get('decision') == 'confirm',
+            confirm=decision == 'confirm',
         )
     except ValidationError as error:
         for message in error.messages:
@@ -150,6 +169,14 @@ def confirm_redemption(request, request_id):
             messages.error(request, 'This redemption request has expired. No coins were deducted.')
         else:
             messages.success(request, 'Request confirmed. The shopkeeper must still confirm before any coins are deducted.' if redemption_request.status == CoinRedemptionRequest.Status.PENDING_SHOPKEEPER else 'Redemption request rejected.')
+    if redemption_request and request.POST.get('notification_id'):
+        from notifications.models import InAppNotification
+        InAppNotification.objects.filter(
+            pk=request.POST.get('notification_id'), user=request.user,
+            redemption_request=redemption_request, read_at__isnull=True,
+        ).update(read_at=timezone.now())
+    if redemption_request and redemption_request.requested_bill_id:
+        return redirect('customers:bill_detail', bill_id=redemption_request.requested_bill_id)
     return redirect('customers:wallet')
 
 
@@ -253,6 +280,37 @@ def notification_settings(request):
         'form': form, 'settings_title': 'Notification settings',
         'settings_description': 'Choose whether Shop Coin can send account and rewards updates.',
     })
+
+
+@customer_required
+def notification_inbox(request):
+    from notifications.models import InAppNotification
+    notifications = InAppNotification.objects.filter(user=request.user).select_related(
+        'redemption_request__requested_bill',
+    ).order_by('-created_at', '-pk')
+    now = timezone.now()
+    for notification in notifications:
+        redemption_request = notification.redemption_request
+        notification.can_respond = bool(
+            redemption_request
+            and redemption_request.status == CoinRedemptionRequest.Status.PENDING_CUSTOMER
+            and redemption_request.expires_at > now
+        )
+    return render(request, 'customer/notifications.html', {'notifications': notifications})
+
+
+@customer_required
+@require_POST
+def open_notification(request, notification_id):
+    from notifications.models import InAppNotification
+    notification = get_object_or_404(InAppNotification, pk=notification_id, user=request.user)
+    if notification.read_at is None:
+        notification.read_at = timezone.now()
+        notification.save(update_fields=('read_at',))
+    target = notification.url
+    if target and url_has_allowed_host_and_scheme(target, allowed_hosts={request.get_host()}, require_https=request.is_secure()):
+        return redirect(target)
+    return redirect('customers:notification_inbox')
 
 
 @customer_required

@@ -68,6 +68,21 @@
         {{ form.discount }}
         {% for error in form.discount.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
       </div>
+      {% if coin_summary and coin_summary.bill_redemption_available %}
+      <div class="bill-field bill-redemption-field" id="bill-coin-redemption"
+           data-purchase-coins="{{ coin_summary.purchase_coins }}"
+           data-purchase-value="{{ coin_summary.purchase_reward_value }}"
+           data-website-coins="{% if coin_summary.website_redeemable %}{{ coin_summary.website_coins }}{% else %}0{% endif %}"
+           data-website-value="{% if coin_summary.website_redeemable %}{{ coin_summary.website_reward_value }}{% else %}0.00{% endif %}"
+           data-available-coins="{{ coin_summary.redeemable_coins }}">
+        <label class="form-label" for="id_redemption_coins">Apply ShopCoin Redemption</label>
+        <p class="form-text mb-2">Eligible confirmed balance: <strong>{{ coin_summary.redeemable_coins }} coins · ₹{{ coin_summary.redeemable_reward_value|floatformat:2 }}</strong> using saved coin values.</p>
+        <p class="form-text mb-2">Purchase Coins: {{ coin_summary.purchase_coins }} · saved value ₹{{ coin_summary.purchase_reward_value|floatformat:2 }}{% if coin_summary.website_redeemable %}<br>Website Coins: {{ coin_summary.website_coins }} · saved value ₹{{ coin_summary.website_reward_value|floatformat:2 }}{% endif %}</p>
+        {{ form.redemption_coins }}{% for error in form.redemption_coins.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
+        <div class="form-text">Enter the coin quantity to request from the customer. Coins are deducted only after customer approval and shopkeeper confirmation.</div>
+        <p class="mb-0 mt-2">Selected coin discount: <strong>₹<span id="selected-coin-discount">0.00</span></strong></p>
+      </div>
+      {% endif %}
       {% if can_apply_redemption %}<div class="bill-field">
         <label class="form-label" for="id_redemption_to_apply">Apply confirmed redemption from an earlier bill</label>
         <select name="redemption_to_apply" id="id_redemption_to_apply" class="form-select">
@@ -85,6 +100,7 @@
         <div><span>Subtotal</span><strong>₹<span id="subtotal">0.00</span></strong></div>
         <div><span>Other discount</span><strong>−₹<span id="merchant-discount">0.00</span></strong></div>
         <div><span>Coin redemption discount</span><strong>−₹<span id="redemption-discount">0.00</span></strong></div>
+        <div><span>Original bill amount</span><strong>₹<span id="original-total">0.00</span></strong></div>
         <div class="bill-final-total"><span>Final amount</span><strong>₹<span id="final-total">0.00</span></strong></div>
         <div><span>Remaining amount</span><strong>₹<span id="remaining-total">0.00</span></strong></div>
         <div><span>Payment status</span><strong id="payment-status">Unpaid</strong></div>
@@ -92,14 +108,6 @@
         <p><i class="fa-solid fa-coins" aria-hidden="true"></i> Coins are awarded only on payment received. Remaining balance becomes Udhar automatically.</p>
       </section>
     </div>
-
-    {% if can_request_redemption %}<div class="alert alert-success mt-3">
-      Eligible coins available: <strong>{{ coin_summary.redeemable_coins }}</strong> · Reward value: <strong>₹{{ coin_summary.redeemable_reward_value|floatformat:2 }}</strong>.
-    </div><div class="form-check mt-3">
-      {{ form.request_coin_redemption }}
-      <label class="form-check-label" for="{{ form.request_coin_redemption.id_for_label }}">Request coin redemption for a future bill</label>
-      <div class="form-text">This sends the customer a confirmation request. Coins are not deducted now.</div>
-    </div>{% endif %}
 
     <div class="bill-actions">
       <a class="btn btn-outline-secondary" href="{% url 'shops:bills' %}">Cancel</a>
@@ -115,6 +123,8 @@
   const discount = document.getElementById('id_discount');
   const paymentReceived = document.getElementById('id_payment_received');
   const redemptionSelect = document.getElementById('id_redemption_to_apply');
+  const redemptionCoins = document.getElementById('id_redemption_coins');
+  const redemptionData = document.getElementById('bill-coin-redemption');
   const prices = {
     {% for product in shop.products.all %}"{{ product.pk }}": {{ product.effective_price }},{% endfor %}
   };
@@ -128,17 +138,30 @@
       subtotal += price * quantity;
     });
     const discountAmount = Number.parseFloat(discount.value) || 0;
-    const redemptionValue = Number.parseFloat(redemptionSelect?.selectedOptions[0]?.dataset.value) || 0;
+    const applyValue = Number.parseFloat(redemptionSelect?.selectedOptions[0]?.dataset.value) || 0;
+    const selectedCoins = Number.parseInt(redemptionCoins?.value, 10) || 0;
+    const purchaseCoins = Number.parseInt(redemptionData?.dataset.purchaseCoins, 10) || 0;
+    const purchaseValue = Number.parseFloat(redemptionData?.dataset.purchaseValue) || 0;
+    const websiteCoins = Number.parseInt(redemptionData?.dataset.websiteCoins, 10) || 0;
+    const websiteValue = Number.parseFloat(redemptionData?.dataset.websiteValue) || 0;
+    const usedPurchase = Math.min(selectedCoins, purchaseCoins);
+    const usedWebsite = Math.max(0, selectedCoins - usedPurchase);
+    const purchaseUnit = purchaseCoins ? Math.round((purchaseValue / purchaseCoins) * 100) / 100 : 0;
+    const websiteUnit = websiteCoins ? Math.round((websiteValue / websiteCoins) * 100) / 100 : 0;
+    const selectedRedemptionValue = usedPurchase * purchaseUnit + usedWebsite * websiteUnit;
+    const redemptionValue = applyValue + selectedRedemptionValue;
     const finalAmount = Math.max(0, subtotal - discountAmount - redemptionValue);
     const received = Math.max(0, Number.parseFloat(paymentReceived.value) || 0);
     const remaining = Math.max(0, finalAmount - received);
     document.getElementById('subtotal').textContent = subtotal.toFixed(2);
     document.getElementById('merchant-discount').textContent = discountAmount.toFixed(2);
     document.getElementById('redemption-discount').textContent = redemptionValue.toFixed(2);
+    document.getElementById('selected-coin-discount')?.replaceChildren(selectedRedemptionValue.toFixed(2));
+    document.getElementById('original-total').textContent = Math.max(0, subtotal - discountAmount).toFixed(2);
     document.getElementById('final-total').textContent = finalAmount.toFixed(2);
     document.getElementById('remaining-total').textContent = remaining.toFixed(2);
-    document.getElementById('payment-status').textContent = remaining === 0 ? 'Paid' : received === 0 ? 'Unpaid' : 'Partially paid';
-    document.getElementById('coins-earned').textContent = received >= 1000 ? String(Math.floor(received / 100)) : '0';
+    document.getElementById('payment-status').textContent = selectedCoins > 0 ? 'Pending customer approval' : remaining === 0 ? 'Paid' : received === 0 ? 'Unpaid' : 'Partially paid';
+    document.getElementById('coins-earned').textContent = selectedCoins > 0 ? '0 until approved' : received >= 1000 ? String(Math.floor(received / 100)) : '0';
   }
 
   document.getElementById('add-line').addEventListener('click', () => {
@@ -165,6 +188,14 @@
   discount.addEventListener('input', calculateTotals);
   paymentReceived.addEventListener('input', calculateTotals);
   redemptionSelect?.addEventListener('change', calculateTotals);
+  redemptionCoins?.addEventListener('input', () => {
+    if (Number.parseInt(redemptionCoins.value, 10) > 0 && redemptionSelect) redemptionSelect.value = '';
+    calculateTotals();
+  });
+  redemptionSelect?.addEventListener('change', () => {
+    if (redemptionSelect.value && redemptionCoins) redemptionCoins.value = '0';
+    calculateTotals();
+  });
   rows.addEventListener('change', (event) => {
     if (!event.target.matches('.bill-product-select')) return;
     const selectedOption = event.target.selectedOptions[0];

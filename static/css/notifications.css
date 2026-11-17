@@ -1,0 +1,10 @@
+.notification-bell{position:relative;display:inline-flex;align-items:center;justify-content:center;width:2.65rem;height:2.65rem;border:1px solid var(--sc-border,#d8e4df);border-radius:50%;color:var(--sc-brand,#136c55);text-decoration:none;flex:0 0 auto}
+.notification-bell i{font-size:1.15rem}
+.notification-badge{position:absolute;top:-.25rem;right:-.25rem;min-width:1.2rem;padding:.1rem .3rem;border-radius:99px;background:#c53c4c;color:#fff;font-size:.7rem;font-weight:700;text-align:center}
+.notification-list{padding:clamp(1rem,3vw,1.5rem)}
+.notification-card{padding:1rem 0;border-bottom:1px solid var(--sc-border,#d8e4df)}
+.notification-card:first-child{padding-top:0}
+.notification-card:last-child{border-bottom:0;padding-bottom:0}
+.notification-unread{border-left:3px solid var(--sc-brand,#136c55);padding-left:1rem}
+.notification-message{white-space:normal;overflow-wrap:anywhere}
+@media(max-width:991.98px){.notification-bell{margin-left:auto;margin-right:.5rem}.notification-message{font-size:.95rem}}

@@ -10,6 +10,7 @@ from django.db import models
 class Bill(models.Model):
     class Status(models.TextChoices):
         COMPLETED = 'COMPLETED', 'Completed'
+        PENDING_REDEMPTION = 'PENDING_REDEMPTION', 'Pending coin redemption approval'
         CANCELLED = 'CANCELLED', 'Cancelled'
         REFUNDED = 'REFUNDED', 'Refunded'
 
@@ -35,7 +36,7 @@ class Bill(models.Model):
     wallet_balance_before = models.PositiveIntegerField(default=0)
     wallet_balance_after = models.PositiveIntegerField(default=0)
     cumulative_shopping_after = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-    status = models.CharField(max_length=12, choices=Status.choices, default=Status.COMPLETED, db_index=True)
+    status = models.CharField(max_length=24, choices=Status.choices, default=Status.COMPLETED, db_index=True)
     issued_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     class Meta:
@@ -85,6 +86,31 @@ class BillItem(models.Model):
 
     def __str__(self):
         return f'{self.product_name} × {self.quantity}'
+
+
+class BillEditHistory(models.Model):
+    """Append-only snapshots of bill changes made through the shopkeeper UI."""
+    bill = models.ForeignKey(Bill, on_delete=models.SET_NULL, null=True, blank=True, related_name='edit_history')
+    bill_number = models.CharField(max_length=48, db_index=True)
+    edited_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='bill_edits')
+    reason = models.TextField()
+    before_snapshot = models.JSONField()
+    after_snapshot = models.JSONField()
+    edited_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ('-edited_at', '-pk')
+
+    def __str__(self):
+        return f'{self.bill_number} edited at {self.edited_at}'
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValueError('Bill edit history records are immutable.')
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError('Bill edit history records are immutable.')
 
 
 class BillPayment(models.Model):

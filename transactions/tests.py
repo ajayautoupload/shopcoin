@@ -7,16 +7,17 @@ from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
-from django.db import connection, connections
+from django.db import connection, connections, transaction
 from django.test import TestCase, TransactionTestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from accounts.models import CustomerProfile, ShopkeeperProfile, UserProfile
 from shops.models import Product, Shop
-from transactions.models import Bill, BillPayment, Credit, CreditPayment
+from transactions.models import Bill, BillEditHistory, BillPayment, Credit, CreditPayment
 from transactions.services import create_bill, set_bill_status
 from wallet.models import CoinLedger, CoinRedemption, CoinRedemptionRequest, CoinRule, CoinValue, Wallet
+from notifications.models import InAppNotification
 from wallet.services import get_customer_coin_summary, get_coin_rule_for_balance
 
 User = get_user_model()
@@ -142,12 +143,193 @@ class BillFlowTests(TestCase):
     def create(self, key=None, price='1800.00', discount='0.00'):
         return create_bill(shopkeeper=self.owner, shop=self.shop, customer_id=self.customer.pk, idempotency_key=key or uuid4(), discount=discount, items=[{'product': self.product, 'product_name': 'Shirt', 'quantity': 1, 'unit_price': price}])
 
-    def create_paid_bill(self, *, total, payment_received, key=None):
+    def create_paid_bill(self, *, total, payment_received, key=None, discount='0.00'):
+        return create_bill(
+            shopkeeper=self.owner, shop=self.shop, customer_id=self.customer.pk,
+            idempotency_key=key or uuid4(), discount=discount, payment_received=payment_received,
+            items=[{'product': self.product, 'product_name': 'Shirt', 'quantity': 1, 'unit_price': total}],
+        )
+
+    def create_bill_with_redemption(self, *, coins, total='1000.00', payment_received='0.00', key=None):
         return create_bill(
             shopkeeper=self.owner, shop=self.shop, customer_id=self.customer.pk,
             idempotency_key=key or uuid4(), discount='0.00', payment_received=payment_received,
-            items=[{'product': self.product, 'product_name': 'Shirt', 'quantity': 1, 'unit_price': total}],
+            redemption_coins=coins,
+            items=[{'product': None, 'product_name': 'Bill item', 'quantity': 1, 'unit_price': total}],
         )
+
+    def edit_payload(self, *, reason='Corrected line details', price='2000.00', discount='200.00'):
+        return {
+            'discount': discount,
+            'reason': reason,
+            'items-TOTAL_FORMS': '1', 'items-INITIAL_FORMS': '1',
+            'items-MIN_NUM_FORMS': '1', 'items-MAX_NUM_FORMS': '40',
+            'items-0-product': str(self.product.pk), 'items-0-product_name': 'Corrected Shirt',
+            'items-0-quantity': '1', 'items-0-unit_price': price,
+            'items-0-DELETE': '',
+        }
+
+    def test_bill_edit_within_ten_minutes_is_creator_only_and_records_immutable_snapshots(self):
+        bill, _ = self.create()
+        self.client.force_login(self.owner)
+        detail = self.client.get(reverse('shops:bill_detail', args=[bill.pk]))
+        self.assertTrue(detail.context['can_edit_bill'])
+        response = self.client.post(reverse('shops:bill_edit', args=[bill.pk]), self.edit_payload())
+        self.assertRedirects(response, reverse('shops:bill_detail', args=[bill.pk]))
+        bill.refresh_from_db()
+        history = BillEditHistory.objects.get(bill=bill)
+        self.assertEqual(history.reason, 'Corrected line details')
+        self.assertEqual(history.before_snapshot['items'][0]['product_name'], 'Shirt')
+        self.assertEqual(history.after_snapshot['items'][0]['product_name'], 'Corrected Shirt')
+        self.assertEqual((bill.total_amount, bill.paid_amount), (Decimal('1800.00'), Decimal('1800.00')))
+        with self.assertRaisesMessage(ValueError, 'immutable'):
+            history.reason = 'rewritten'
+            history.save()
+        with self.assertRaisesMessage(ValueError, 'immutable'):
+            history.delete()
+
+        other = User.objects.create_user('bill-editor-other', password='StrongPass!482')
+        UserProfile.objects.create(user=other, role=UserProfile.Role.SHOPKEEPER)
+        ShopkeeperProfile.objects.create(user=other, phone='9876500011')
+        self.client.force_login(other)
+        self.assertEqual(self.client.get(reverse('shops:bill_edit', args=[bill.pk])).status_code, 404)
+
+    def test_bill_edit_reason_is_required_and_total_cannot_change(self):
+        bill, _ = self.create()
+        self.client.force_login(self.owner)
+        url = reverse('shops:bill_edit', args=[bill.pk])
+        response = self.client.post(url, self.edit_payload(reason=''))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'This field is required.')
+        response = self.client.post(url, self.edit_payload(price='2100.00', discount='200.00'))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'The final bill amount must stay unchanged')
+        bill.refresh_from_db()
+        self.assertEqual((bill.subtotal, bill.total_amount, bill.items.get().product_name), (Decimal('1800.00'), Decimal('1800.00'), 'Shirt'))
+        self.assertFalse(BillEditHistory.objects.exists())
+
+    def test_bill_edit_sends_customer_only_hindi_notification_with_comparison_and_deduplication(self):
+        bill, _ = self.create()
+        profile = self.customer_user.profile
+        profile.preferred_language = 'hi'
+        profile.save(update_fields=('preferred_language', 'updated_at'))
+        other_user = User.objects.create_user('bill-unrelated-customer', password='StrongPass!482')
+        UserProfile.objects.create(user=other_user, role=UserProfile.Role.CUSTOMER)
+        CustomerProfile.objects.create(user=other_user, connected_shop=self.shop, phone='9876500099')
+
+        self.client.force_login(self.owner)
+        response = self.client.post(reverse('shops:bill_edit', args=[bill.pk]), self.edit_payload())
+        self.assertRedirects(response, reverse('shops:bill_detail', args=[bill.pk]))
+        notification = InAppNotification.objects.get(event_key=f'bill-edit-history:{bill.edit_history.get().pk}')
+        self.assertEqual(notification.title, 'आपका बिल अपडेट किया गया')
+        for expected in (self.shop.name, bill.bill_number, 'Corrected line details', 'पहले की जानकारी:', 'नई जानकारी:', 'Shirt', 'Corrected Shirt'):
+            self.assertIn(expected, notification.message)
+        self.assertEqual(notification.url, reverse('customers:bill_detail', args=[bill.pk]))
+        self.assertFalse(InAppNotification.objects.filter(user=other_user).exists())
+
+        from notifications.services import create_bill_edit_notification
+        history = bill.edit_history.get()
+        duplicate = create_bill_edit_notification(bill=bill, history=history)
+        self.assertEqual(duplicate.pk, notification.pk)
+        self.assertEqual(InAppNotification.objects.filter(event_key=f'bill-edit-history:{history.pk}').count(), 1)
+
+    def test_bill_edit_notification_uses_english_for_english_customer(self):
+        bill, _ = self.create()
+        self.client.force_login(self.owner)
+        self.client.post(reverse('shops:bill_edit', args=[bill.pk]), self.edit_payload())
+        notification = InAppNotification.objects.get(event_key=f'bill-edit-history:{bill.edit_history.get().pk}')
+        self.assertEqual(notification.title, 'Your bill was updated')
+        self.assertIn('Previous details:', notification.message)
+        self.assertIn('Updated details:', notification.message)
+        self.assertIn('Reason: Corrected line details', notification.message)
+
+    def test_notification_and_edit_history_rollback_together(self):
+        bill, _ = self.create()
+        from transactions.services_bill_edit import edit_bill
+        with self.assertRaisesRegex(RuntimeError, 'rollback test'):
+            with transaction.atomic():
+                edit_bill(
+                    bill_id=bill.pk, actor=self.owner, shop=self.shop,
+                    reason='Rollback test', discount=Decimal('200.00'),
+                    items=[{'product': self.product, 'product_name': 'Rolled back', 'quantity': 1, 'unit_price': Decimal('2000.00')}],
+                )
+                raise RuntimeError('rollback test')
+        bill.refresh_from_db()
+        self.assertEqual((bill.subtotal, bill.items.get().product_name), (Decimal('1800.00'), 'Shirt'))
+        self.assertFalse(BillEditHistory.objects.exists())
+        self.assertFalse(InAppNotification.objects.filter(event_key__startswith='bill-edit-history:').exists())
+
+    def test_disabled_customer_notification_preference_is_honored(self):
+        bill, _ = self.create()
+        self.customer.notifications_enabled = False
+        self.customer.save(update_fields=('notifications_enabled',))
+        self.client.force_login(self.owner)
+        self.client.post(reverse('shops:bill_edit', args=[bill.pk]), self.edit_payload())
+        self.assertEqual(BillEditHistory.objects.count(), 1)
+        self.assertEqual(InAppNotification.objects.filter(event_key__startswith='bill-edit-history:').count(), 0)
+        self.assertEqual(InAppNotification.objects.filter(event_key__startswith='bill-purchase-thank-you:').count(), 1)
+
+    def test_customer_notification_inbox_is_scoped_and_open_marks_read(self):
+        bill, _ = self.create()
+        owned = InAppNotification.objects.create(
+            user=self.customer_user, title='Owned notice', message='Bill update',
+            url=reverse('customers:bill_detail', args=[bill.pk]),
+        )
+        other_user = User.objects.create_user('notification-other', password='StrongPass!482')
+        UserProfile.objects.create(user=other_user, role=UserProfile.Role.CUSTOMER)
+        CustomerProfile.objects.create(user=other_user, connected_shop=self.shop, phone='9876500019')
+        other = InAppNotification.objects.create(user=other_user, title='Private notice', message='Private')
+        self.client.force_login(self.customer_user)
+        response = self.client.get(reverse('customers:notification_inbox'))
+        self.assertContains(response, 'Owned notice')
+        self.assertNotContains(response, 'Private notice')
+        response = self.client.post(reverse('customers:open_notification', args=[owned.pk]))
+        self.assertRedirects(response, reverse('customers:bill_detail', args=[bill.pk]))
+        owned.refresh_from_db()
+        self.assertIsNotNone(owned.read_at)
+        self.assertEqual(self.client.post(reverse('customers:open_notification', args=[other.pk])).status_code, 404)
+
+    def test_bill_edit_window_is_enforced_on_detail_and_backend_at_ten_minutes(self):
+        bill, _ = self.create()
+        Bill.objects.filter(pk=bill.pk).update(issued_at=timezone.now() - timedelta(minutes=10, seconds=1))
+        self.client.force_login(self.owner)
+        detail = self.client.get(reverse('shops:bill_detail', args=[bill.pk]))
+        self.assertFalse(detail.context['can_edit_bill'])
+        response = self.client.get(reverse('shops:bill_edit', args=[bill.pk]))
+        self.assertRedirects(response, reverse('shops:bill_detail', args=[bill.pk]))
+        response = self.client.post(reverse('shops:bill_edit', args=[bill.pk]), self.edit_payload())
+        self.assertRedirects(response, reverse('shops:bill_detail', args=[bill.pk]))
+        self.assertFalse(BillEditHistory.objects.exists())
+
+    def test_django_admin_cannot_edit_bill_financial_fields_or_delete_bill(self):
+        bill, _ = self.create()
+        admin = User.objects.create_superuser('bill-admin', 'admin@example.com', 'StrongPass!482')
+        self.client.force_login(admin)
+        change_url = f'/admin/transactions/bill/{bill.pk}/change/'
+        response = self.client.get(change_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '1800.00')
+        readonly_names = set(response.context['adminform'].readonly_fields)
+        self.assertTrue({'subtotal', 'discount', 'total_amount', 'paid_amount'}.issubset(readonly_names))
+        response = self.client.post(change_url, {
+            'subtotal': '9000.00', 'discount': '0.00', 'total_amount': '9000.00',
+            'paid_amount': '0.00', 'status': Bill.Status.COMPLETED, '_save': 'Save',
+        })
+        self.assertIn(response.status_code, (200, 302))
+        bill.refresh_from_db()
+        self.assertEqual((bill.subtotal, bill.total_amount, bill.paid_amount), (Decimal('1800.00'), Decimal('1800.00'), Decimal('1800.00')))
+        item = bill.items.get()
+        item_change = self.client.get(f'/admin/transactions/billitem/{item.pk}/change/')
+        self.assertEqual(item_change.status_code, 200)
+        item_readonly = set(item_change.context['adminform'].readonly_fields)
+        self.assertTrue({'product_name', 'quantity', 'unit_price', 'line_total'}.issubset(item_readonly))
+        item_post = self.client.post(f'/admin/transactions/billitem/{item.pk}/change/', {
+            'product_name': 'Admin changed', 'quantity': '999', 'unit_price': '0.01',
+        })
+        self.assertIn(item_post.status_code, (200, 302, 403))
+        item.refresh_from_db()
+        self.assertEqual(item.product_name, 'Shirt')
+        self.assertFalse(self.client.post(f'/admin/transactions/bill/{bill.pk}/delete/').status_code == 200)
 
     def test_partial_bill_creates_linked_udhar_and_awards_only_received_payment_coins(self):
         from transactions.credit_services import receive_credit_payment
@@ -163,6 +345,79 @@ class BillFlowTests(TestCase):
         self.wallet.refresh_from_db()
         self.assertEqual((payment.coin_ledger.coin_delta, bill.paid_amount, bill.remaining_amount), (20, Decimal('5000.00'), Decimal('0.00')))
         self.assertEqual((bill.payment_status, bill.coins_earned, self.wallet.balance), (Bill.PaymentStatus.PAID, 50, 60))
+
+    def test_purchase_thank_you_contains_actual_bill_rewards_active_offer_and_is_idempotent(self):
+        from offers.models import ShopOffer
+        from notifications.services import create_purchase_thank_you_notification
+
+        self.customer_user.first_name = 'Ajay'
+        self.customer_user.save(update_fields=('first_name',))
+        ShopOffer.objects.create(
+            shop=self.shop, title='Spring collection', badge='15% OFF',
+            description='Selected items only', starts_at=timezone.now() - timedelta(days=1),
+            ends_at=timezone.now() + timedelta(days=1), is_active=True,
+        )
+        ShopOffer.objects.create(shop=self.shop, title='Inactive offer', is_active=False)
+        ShopOffer.objects.create(
+            shop=self.shop, title='Expired offer', is_active=True,
+            ends_at=timezone.now() - timedelta(days=1),
+        )
+        key = uuid4()
+        bill, created = self.create_paid_bill(
+            total='5000.00', payment_received='3000.00', key=key, discount='500.00',
+        )
+        self.assertTrue(created)
+        notice = InAppNotification.objects.get(event_key=f'bill-purchase-thank-you:{bill.pk}')
+        self.assertEqual(notice.user_id, self.customer_user.pk)
+        self.assertEqual(notice.url, reverse('customers:bill_detail', args=[bill.pk]))
+        for expected in (
+            'Hi Ajay,', self.shop.name, bill.bill_number, 'Products purchased today:',
+            'Shirt × 1', 'Original bill amount: ₹5000.00', 'Shop discount: ₹500.00',
+            'Coin redemption discount: ₹0.00', 'Final payable: ₹4500.00',
+            'Payment actually received: ₹3000.00', 'Remaining Udhar: ₹1500.00',
+            'Purchase Coins actually earned: 30 · saved value ₹300.00',
+            'Your current confirmed balance: 40 coins · actual reward value ₹400.00',
+            'Spring collection', '15% OFF', 'Selected items only',
+        ):
+            self.assertIn(expected, notice.message)
+        self.assertNotIn('Inactive offer', notice.message)
+        duplicate_notice = create_purchase_thank_you_notification(bill=bill)
+        self.assertEqual(duplicate_notice.pk, notice.pk)
+        duplicate_bill, duplicate_created = self.create_paid_bill(
+            total='5000.00', payment_received='3000.00', key=key, discount='500.00',
+        )
+        self.assertFalse(duplicate_created)
+        self.assertEqual(duplicate_bill.pk, bill.pk)
+        self.assertEqual(InAppNotification.objects.filter(event_key=f'bill-purchase-thank-you:{bill.pk}').count(), 1)
+
+    def test_purchase_thank_you_uses_hindi_and_respects_notification_preference(self):
+        self.customer_user.profile.preferred_language = 'hi'
+        self.customer_user.profile.save(update_fields=('preferred_language', 'updated_at'))
+        self.customer_user.first_name = 'अजय'
+        self.customer_user.save(update_fields=('first_name',))
+        bill, _ = self.create_paid_bill(total='1800.00', payment_received='1800.00')
+        notice = InAppNotification.objects.get(event_key=f'bill-purchase-thank-you:{bill.pk}')
+        self.assertEqual(notice.title, f'{self.shop.name} की ओर से धन्यवाद!')
+        self.assertIn('नमस्ते अजय,', notice.message)
+        self.assertIn('मूल बिल राशि: ₹1800.00', notice.message)
+        self.assertIn('इस खरीद पर मिले Purchase Coins: 18', notice.message)
+        self.assertIn('इस समय दुकान का कोई सक्रिय ऑफ़र सूचीबद्ध नहीं है', notice.message)
+
+        self.customer.notifications_enabled = False
+        self.customer.save(update_fields=('notifications_enabled',))
+        disabled_bill, _ = self.create_paid_bill(total='1200.00', payment_received='1200.00')
+        self.assertFalse(InAppNotification.objects.filter(event_key=f'bill-purchase-thank-you:{disabled_bill.pk}').exists())
+
+    def test_purchase_thank_you_is_only_visible_to_bill_customer(self):
+        bill, _ = self.create_paid_bill(total='1200.00', payment_received='1200.00')
+        notice = InAppNotification.objects.get(event_key=f'bill-purchase-thank-you:{bill.pk}')
+        other_user = User.objects.create_user('thankyou-other-customer', password='StrongPass!482')
+        UserProfile.objects.create(user=other_user, role=UserProfile.Role.CUSTOMER)
+        CustomerProfile.objects.create(user=other_user, connected_shop=self.shop, phone='9876500038')
+        self.client.force_login(other_user)
+        inbox = self.client.get(reverse('customers:notification_inbox'))
+        self.assertNotContains(inbox, bill.bill_number)
+        self.assertEqual(self.client.post(reverse('customers:open_notification', args=[notice.pk])).status_code, 404)
 
     def test_zero_and_full_payment_create_expected_credit_and_status(self):
         unpaid, _ = self.create_paid_bill(total='5000.00', payment_received='0.00')
@@ -201,13 +456,13 @@ class BillFlowTests(TestCase):
         first_page = self.client.get(url)
         self.assertEqual(first_page.status_code, 200)
         self.assertNotIn('redemption_to_apply', first_page.context['form'].fields)
-        self.assertNotIn('request_coin_redemption', first_page.context['form'].fields)
+        self.assertNotIn('redemption_coins', first_page.context['form'].fields)
 
         self.create_paid_bill(total='1000.00', payment_received='1000.00')
         later_page = self.client.get(url)
         self.assertEqual(later_page.status_code, 200)
-        self.assertContains(later_page, 'Eligible coins available:')
-        self.assertContains(later_page, 'Request coin redemption for a future bill')
+        self.assertContains(later_page, 'Eligible confirmed balance:')
+        self.assertContains(later_page, 'Apply ShopCoin Redemption')
 
     def test_redemption_request_is_rejected_before_any_completed_bill(self):
         from wallet.services import create_coin_redemption_request
@@ -216,6 +471,34 @@ class BillFlowTests(TestCase):
                 shopkeeper=self.owner, shop=self.shop, customer=self.customer,
                 idempotency_key=uuid4(),
             )
+
+    def test_generic_redemption_request_is_deduplicated_and_notification_uses_wallet_page(self):
+        from wallet.services import create_coin_redemption_request
+        self.create_paid_bill(total='1200.00', payment_received='1200.00')
+        request_obj, created = create_coin_redemption_request(
+            shopkeeper=self.owner, shop=self.shop, customer=self.customer, idempotency_key=uuid4(),
+        )
+        self.assertTrue(created)
+        with self.assertRaisesMessage(ValidationError, 'existing redemption request'):
+            create_coin_redemption_request(
+                shopkeeper=self.owner, shop=self.shop, customer=self.customer, idempotency_key=uuid4(),
+            )
+        notice = InAppNotification.objects.get(event_key=f'generic-redemption:{request_obj.pk}:requested')
+        self.assertEqual(notice.url, reverse('customers:wallet'))
+        self.assertEqual(notice.redemption_request_id, request_obj.pk)
+        self.assertEqual(InAppNotification.objects.filter(event_key__startswith='generic-redemption:').count(), 1)
+
+    def test_generic_redemption_notifications_respect_customer_preference(self):
+        from wallet.services import create_coin_redemption_request
+        self.create_paid_bill(total='1200.00', payment_received='1200.00')
+        self.customer.notifications_enabled = False
+        self.customer.save(update_fields=('notifications_enabled',))
+        request_obj, _ = create_coin_redemption_request(
+            shopkeeper=self.owner, shop=self.shop, customer=self.customer, idempotency_key=uuid4(),
+        )
+        self.assertFalse(InAppNotification.objects.filter(
+            event_key=f'generic-redemption:{request_obj.pk}:requested',
+        ).exists())
 
     def test_bill_payment_reversal_creates_audit_entry_and_restores_udhar(self):
         from transactions.credit_services import reverse_bill_payment
@@ -442,6 +725,238 @@ class BillFlowTests(TestCase):
         self.assertEqual(CoinRedemptionRequest.objects.get().status, CoinRedemptionRequest.Status.REJECTED)
         self.assertFalse(CoinRedemption.objects.exists())
 
+    def test_bill_redemption_uses_saved_weighted_values_and_waits_for_both_approvals(self):
+        self.create(price='5000.00')  # 50 Purchase Coins saved at ₹12 each; fixture coins retain ₹10 each.
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.balance, 60)
+        bill, created = self.create_bill_with_redemption(coins=30, payment_received='300.00')
+        request_obj = CoinRedemptionRequest.objects.get(requested_bill=bill)
+        self.assertTrue(created)
+        self.assertFalse(InAppNotification.objects.filter(event_key=f'bill-purchase-thank-you:{bill.pk}').exists())
+        self.assertEqual((request_obj.coins_requested, request_obj.purchase_coins_requested), (30, 30))
+        self.assertEqual(request_obj.reward_value, Decimal('350.10'))
+        self.assertEqual(bill.status, Bill.Status.PENDING_REDEMPTION)
+        self.assertEqual((bill.total_amount, bill.paid_amount, bill.coins_earned), (Decimal('1000.00'), Decimal('0.00'), 0))
+        self.assertFalse(bill.payments.exists())
+        self.assertFalse(bill.credits.exists())
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.balance, 60)
+
+        self.client.force_login(self.customer_user)
+        response = self.client.post(reverse('customers:confirm_redemption', args=[request_obj.pk]), {'decision': 'confirm'})
+        self.assertEqual(response.status_code, 302)
+        request_obj.refresh_from_db()
+        bill.refresh_from_db()
+        self.wallet.refresh_from_db()
+        self.assertEqual(request_obj.status, CoinRedemptionRequest.Status.PENDING_SHOPKEEPER)
+        self.assertEqual((bill.status, bill.paid_amount, self.wallet.balance), (Bill.Status.PENDING_REDEMPTION, Decimal('0.00'), 60))
+        self.assertFalse(CoinRedemption.objects.exists())
+
+        self.client.force_login(self.owner)
+        response = self.client.post(reverse('shops:finalize_redemption', args=[request_obj.pk]))
+        self.assertEqual(response.status_code, 302)
+        bill.refresh_from_db()
+        request_obj.refresh_from_db()
+        self.wallet.refresh_from_db()
+        redemption = request_obj.redemption
+        self.assertEqual(request_obj.status, CoinRedemptionRequest.Status.COMPLETED)
+        self.assertEqual((bill.status, bill.discount, bill.total_amount, bill.paid_amount), (Bill.Status.COMPLETED, Decimal('350.10'), Decimal('649.90'), Decimal('300.00')))
+        self.assertEqual((bill.payment_status, bill.remaining_amount), (Bill.PaymentStatus.PARTIAL, Decimal('349.90')))
+        self.assertEqual((redemption.coins_redeemed, redemption.reward_value, redemption.applied_bill_id), (30, Decimal('350.10'), bill.pk))
+        self.assertEqual((bill.payments.get().amount, bill.payments.get().coins_earned), (Decimal('300.00'), 0))
+        self.assertEqual(bill.credits.get().original_amount, Decimal('349.90'))
+        self.assertEqual(self.wallet.balance, 30)
+        request_notice = InAppNotification.objects.get(event_key=f'bill-redemption:{request_obj.pk}:requested')
+        approval_notice = InAppNotification.objects.get(event_key=f'bill-redemption:{request_obj.pk}:approved')
+        completion_notice = InAppNotification.objects.get(event_key=f'bill-redemption:{request_obj.pk}:completed')
+        self.assertEqual(request_notice.redemption_request_id, request_obj.pk)
+        self.assertEqual(request_notice.url, reverse('customers:bill_detail', args=[bill.pk]))
+        self.assertIn('Original amount: ₹1000.00', request_notice.message)
+        self.assertIn('Selected coins: 30', request_notice.message)
+        self.assertIn('Actual coin value / discount: ₹350.10', request_notice.message)
+        self.assertIn('Proposed final payable: ₹649.90', request_notice.message)
+        self.assertIn('shopkeeper must confirm', approval_notice.message)
+        self.assertIn('Final payable: ₹649.90', completion_notice.message)
+        thank_you = InAppNotification.objects.get(event_key=f'bill-purchase-thank-you:{bill.pk}')
+        self.assertEqual(thank_you.user_id, self.customer_user.pk)
+        self.assertIn('Coin redemption discount: ₹350.10', thank_you.message)
+        self.assertIn('Payment actually received: ₹300.00', thank_you.message)
+        self.assertIn('Remaining Udhar: ₹349.90', thank_you.message)
+        self.assertIn('Purchase Coins actually earned: 0', thank_you.message)
+        self.assertEqual(InAppNotification.objects.filter(event_key=f'bill-purchase-thank-you:{bill.pk}').count(), 1)
+        self.client.post(reverse('shops:finalize_redemption', args=[request_obj.pk]))
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.balance, 30)
+        self.assertEqual(InAppNotification.objects.filter(event_key=f'bill-purchase-thank-you:{bill.pk}').count(), 1)
+
+    def test_bill_redemption_rejection_finalizes_without_discount_or_deduction(self):
+        self.reset_wallet()
+        self.create(price='2000.00')
+        self.wallet.refresh_from_db()
+        bill, _ = self.create_bill_with_redemption(coins=5, payment_received='0.00')
+        request_obj = CoinRedemptionRequest.objects.get(requested_bill=bill)
+        balance_before = self.wallet.balance
+        self.client.force_login(self.customer_user)
+        response = self.client.post(reverse('customers:confirm_redemption', args=[request_obj.pk]), {'decision': 'reject'})
+        self.assertEqual(response.status_code, 302)
+        bill.refresh_from_db()
+        request_obj.refresh_from_db()
+        self.wallet.refresh_from_db()
+        self.assertEqual(request_obj.status, CoinRedemptionRequest.Status.REJECTED)
+        self.assertEqual((bill.status, bill.discount, bill.total_amount), (Bill.Status.COMPLETED, Decimal('0.00'), Decimal('1000.00')))
+        self.assertEqual(bill.credits.get().original_amount, Decimal('1000.00'))
+        self.assertEqual(self.wallet.balance, balance_before)
+        self.assertFalse(CoinRedemption.objects.exists())
+        self.assertTrue(InAppNotification.objects.filter(event_key=f'bill-purchase-thank-you:{bill.pk}').exists())
+        rejection_notice = InAppNotification.objects.get(event_key=f'bill-redemption:{request_obj.pk}:rejected')
+        self.assertIn('No coins were deducted.', rejection_notice.message)
+
+    def test_expired_bill_redemption_falls_back_without_coin_discount(self):
+        self.reset_wallet()
+        self.create(price='2000.00')
+        self.wallet.refresh_from_db()
+        bill, _ = self.create_bill_with_redemption(coins=5, payment_received='100.00')
+        request_obj = CoinRedemptionRequest.objects.get(requested_bill=bill)
+        CoinRedemptionRequest.objects.filter(pk=request_obj.pk).update(expires_at=timezone.now() - timedelta(seconds=1))
+        balance_before = self.wallet.balance
+        self.client.force_login(self.owner)
+        response = self.client.post(reverse('shops:finalize_redemption', args=[request_obj.pk]))
+        self.assertEqual(response.status_code, 302)
+        request_obj.refresh_from_db()
+        bill.refresh_from_db()
+        self.wallet.refresh_from_db()
+        self.assertEqual(request_obj.status, CoinRedemptionRequest.Status.EXPIRED)
+        self.assertEqual((bill.status, bill.discount, bill.total_amount, bill.paid_amount), (Bill.Status.COMPLETED, Decimal('0.00'), Decimal('1000.00'), Decimal('100.00')))
+        self.assertEqual(bill.credits.get().original_amount, Decimal('900.00'))
+        self.assertEqual(self.wallet.balance, balance_before)
+        self.assertFalse(CoinRedemption.objects.exists())
+        self.assertTrue(InAppNotification.objects.filter(event_key=f'bill-purchase-thank-you:{bill.pk}').exists())
+        expiry_notice = InAppNotification.objects.get(event_key=f'bill-redemption:{request_obj.pk}:expired')
+        self.assertIn('No coins were deducted.', expiry_notice.message)
+
+    def test_bill_redemption_rejects_insufficient_coins_and_rolls_back_pending_bill(self):
+        self.reset_wallet()
+        self.create(price='1000.00')
+        self.wallet.refresh_from_db()
+        balance_before = self.wallet.balance
+        with self.assertRaisesMessage(ValidationError, 'Only 10 eligible coins are available'):
+            self.create_bill_with_redemption(coins=11)
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.balance, balance_before)
+        self.assertFalse(Bill.objects.filter(status=Bill.Status.PENDING_REDEMPTION).exists())
+        self.assertFalse(CoinRedemptionRequest.objects.filter(requested_bill__isnull=False).exists())
+
+    def test_bill_idempotency_key_prevents_duplicate_bill_redemption_request(self):
+        self.create(price='2000.00')
+        key = uuid4()
+        bill, created = self.create_bill_with_redemption(coins=2, key=key)
+        duplicate, created_again = self.create_bill_with_redemption(coins=2, key=key)
+        self.assertTrue(created)
+        self.assertFalse(created_again)
+        self.assertEqual(duplicate.pk, bill.pk)
+        self.assertEqual(CoinRedemptionRequest.objects.filter(requested_bill=bill).count(), 1)
+        request_obj = CoinRedemptionRequest.objects.get(requested_bill=bill)
+        self.assertEqual(InAppNotification.objects.filter(event_key=f'bill-redemption:{request_obj.pk}:requested').count(), 1)
+        self.assertEqual(BillPayment.objects.filter(bill=bill).count(), 0)
+        self.assertFalse(Credit.objects.filter(bill=bill).exists())
+
+    def test_pending_redemption_bill_can_be_cancelled_without_coin_or_payment_side_effects(self):
+        self.create(price='2000.00')
+        bill, _ = self.create_bill_with_redemption(coins=2)
+        request_obj = CoinRedemptionRequest.objects.get(requested_bill=bill)
+        cancelled, changed = set_bill_status(bill_id=bill.pk, status=Bill.Status.CANCELLED)
+        request_obj.refresh_from_db()
+        self.wallet.refresh_from_db()
+        self.assertTrue(changed)
+        self.assertEqual(cancelled.status, Bill.Status.CANCELLED)
+        self.assertEqual(request_obj.status, CoinRedemptionRequest.Status.CANCELLED)
+        self.assertEqual(self.wallet.balance, 30)
+        self.assertFalse(bill.payments.exists())
+        self.assertFalse(CoinRedemption.objects.exists())
+        self.assertTrue(InAppNotification.objects.filter(event_key=f'bill-redemption:{request_obj.pk}:cancelled').exists())
+        self.assertFalse(InAppNotification.objects.filter(event_key=f'bill-purchase-thank-you:{bill.pk}').exists())
+
+    def test_redemption_notification_inbox_contains_csrf_yes_and_reject_actions_and_marks_read(self):
+        self.create(price='2000.00')
+        bill, _ = self.create_bill_with_redemption(coins=2)
+        request_obj = CoinRedemptionRequest.objects.get(requested_bill=bill)
+        notice = InAppNotification.objects.get(event_key=f'bill-redemption:{request_obj.pk}:requested')
+        self.assertEqual(notice.redemption_request_id, request_obj.pk)
+        self.assertEqual(notice.url, reverse('customers:bill_detail', args=[bill.pk]))
+        self.assertIn(self.shop.name, notice.message)
+        self.assertIn(bill.bill_number, notice.message)
+        self.assertIn('Original amount:', notice.message)
+        self.assertIn('Selected coins:', notice.message)
+        self.assertIn('Actual coin value / discount:', notice.message)
+        self.assertIn('Proposed final payable:', notice.message)
+        self.client.force_login(self.customer_user)
+        inbox = self.client.get(reverse('customers:notification_inbox'))
+        self.assertContains(inbox, "Yes, It's Me")
+        self.assertContains(inbox, 'Reject')
+        self.assertContains(inbox, 'csrfmiddlewaretoken')
+        opened = self.client.post(reverse('customers:open_notification', args=[notice.pk]))
+        self.assertRedirects(opened, reverse('customers:bill_detail', args=[bill.pk]))
+        notice.refresh_from_db()
+        self.assertIsNotNone(notice.read_at)
+
+    def test_redemption_customer_approval_is_scoped_idempotent_and_does_not_deduct(self):
+        self.create(price='2000.00')
+        bill, _ = self.create_bill_with_redemption(coins=2)
+        request_obj = CoinRedemptionRequest.objects.get(requested_bill=bill)
+        self.client.force_login(self.customer_user)
+        request_notice = InAppNotification.objects.get(event_key=f'bill-redemption:{request_obj.pk}:requested')
+        first = self.client.post(reverse('customers:confirm_redemption', args=[request_obj.pk]), {
+            'decision': 'confirm', 'notification_id': str(request_notice.pk),
+        })
+        self.assertRedirects(first, reverse('customers:bill_detail', args=[bill.pk]))
+        request_notice.refresh_from_db()
+        self.assertIsNotNone(request_notice.read_at)
+        request_obj.refresh_from_db()
+        bill.refresh_from_db()
+        self.wallet.refresh_from_db()
+        self.assertEqual(request_obj.status, CoinRedemptionRequest.Status.PENDING_SHOPKEEPER)
+        self.assertEqual((bill.status, bill.paid_amount, self.wallet.balance), (Bill.Status.PENDING_REDEMPTION, Decimal('0.00'), 30))
+        self.assertFalse(CoinRedemption.objects.exists())
+        self.assertEqual(InAppNotification.objects.filter(event_key=f'bill-redemption:{request_obj.pk}:approved').count(), 1)
+        with self.assertRaisesMessage(ValidationError, 'no longer awaiting your confirmation'):
+            from wallet.services import confirm_coin_redemption_request
+            confirm_coin_redemption_request(request_id=request_obj.pk, customer=self.customer, confirm=True)
+
+        other_user = User.objects.create_user('bill-not-request-customer', password='StrongPass!482')
+        UserProfile.objects.create(user=other_user, role=UserProfile.Role.CUSTOMER)
+        CustomerProfile.objects.create(user=other_user, connected_shop=self.shop, phone='9876500039')
+        self.client.force_login(other_user)
+        self.client.post(reverse('customers:confirm_redemption', args=[request_obj.pk]), {'decision': 'reject'})
+        request_obj.refresh_from_db()
+        self.assertEqual(request_obj.status, CoinRedemptionRequest.Status.PENDING_SHOPKEEPER)
+        self.assertEqual(self.wallet.balance, 30)
+
+        other_owner = User.objects.create_user('bill-redemption-other-owner', password='StrongPass!482')
+        UserProfile.objects.create(user=other_owner, role=UserProfile.Role.SHOPKEEPER)
+        ShopkeeperProfile.objects.create(user=other_owner, phone='9876500049')
+        Shop.objects.create(owner=other_owner, name='Other bill shop', phone='9876500049', address='2 Road', city='Pune', state='Maharashtra', pincode='411001', status=Shop.Status.APPROVED)
+        self.client.force_login(other_owner)
+        self.assertEqual(self.client.post(reverse('shops:finalize_redemption', args=[request_obj.pk])).status_code, 404)
+        request_obj.refresh_from_db()
+        self.assertEqual(request_obj.status, CoinRedemptionRequest.Status.PENDING_SHOPKEEPER)
+
+    def test_bill_redemption_request_and_rejection_notifications_are_hindi(self):
+        self.reset_wallet()
+        self.create(price='2000.00')
+        profile = self.customer_user.profile
+        profile.preferred_language = 'hi'
+        profile.save(update_fields=('preferred_language', 'updated_at'))
+        bill, _ = self.create_bill_with_redemption(coins=2)
+        request_obj = CoinRedemptionRequest.objects.get(requested_bill=bill)
+        notice = InAppNotification.objects.get(event_key=f'bill-redemption:{request_obj.pk}:requested')
+        self.assertEqual(notice.title, 'शॉपकॉइन रिडेम्पशन की पुष्टि आवश्यक')
+        self.assertIn('अंतिम देय राशि:', notice.message)
+        self.client.force_login(self.customer_user)
+        self.client.post(reverse('customers:confirm_redemption', args=[request_obj.pk]), {'decision': 'reject'})
+        rejection = InAppNotification.objects.get(event_key=f'bill-redemption:{request_obj.pk}:rejected')
+        self.assertEqual(rejection.title, 'रिडेम्पशन अनुरोध अस्वीकार')
+        self.assertIn('कोई कॉइन नहीं काटा गया', rejection.message)
+
     def test_expired_redemption_request_cannot_be_confirmed_or_finalized(self):
         self.reset_wallet()
         self.create(price='2000.00')
@@ -664,6 +1179,46 @@ class PostgreSQLRedemptionConcurrencyTests(TransactionTestCase):
             futures = [executor.submit(run) for _ in range(2)]
             return [future.result(timeout=30) for future in futures]
 
+    def test_simultaneous_bill_redemption_finalization_deducts_selected_coins_once(self):
+        from wallet.services import finalize_coin_redemption_request
+
+        source_bill, _ = create_bill(
+            shopkeeper=self.owner, shop=self.shop, customer_id=self.customer.pk,
+            idempotency_key=uuid4(), discount='0.00', payment_received='0.00',
+            items=[{'product_name': 'Source purchase', 'quantity': 1, 'unit_price': '1000.00'}],
+        )
+        pending_bill, _ = create_bill(
+            shopkeeper=self.owner, shop=self.shop, customer_id=self.customer.pk,
+            idempotency_key=uuid4(), discount='0.00', payment_received='0.00', redemption_coins=5,
+            items=[{'product_name': 'Pending purchase', 'quantity': 1, 'unit_price': '1000.00'}],
+        )
+        request_obj = CoinRedemptionRequest.objects.get(requested_bill=pending_bill)
+        request_obj.status = CoinRedemptionRequest.Status.PENDING_SHOPKEEPER
+        request_obj.customer_confirmed_at = timezone.now()
+        request_obj.save(update_fields=('status', 'customer_confirmed_at'))
+
+        def finalize():
+            try:
+                result = finalize_coin_redemption_request(
+                    request_id=request_obj.pk,
+                    shopkeeper=User.objects.get(pk=self.owner.pk),
+                    shop=Shop.objects.get(pk=self.shop.pk),
+                )
+                return ('completed', result.pk)
+            except ValidationError:
+                return ('already_finalized', None)
+
+        results = self._parallel_calls(finalize)
+        self.wallet.refresh_from_db()
+        request_obj.refresh_from_db()
+        pending_bill.refresh_from_db()
+        self.assertCountEqual([result[0] for result in results], ['completed', 'already_finalized'])
+        self.assertEqual(self.wallet.balance, 5)
+        self.assertEqual(CoinRedemption.objects.filter(customer=self.customer).count(), 1)
+        self.assertEqual(request_obj.status, CoinRedemptionRequest.Status.COMPLETED)
+        self.assertEqual(pending_bill.status, Bill.Status.COMPLETED)
+        self.assertEqual(InAppNotification.objects.filter(event_key=f'bill-redemption:{request_obj.pk}:completed').count(), 1)
+
     def test_simultaneous_duplicate_request_creation_returns_one_request(self):
         from wallet.services import create_coin_redemption_request
 
@@ -678,6 +1233,33 @@ class PostgreSQLRedemptionConcurrencyTests(TransactionTestCase):
         self.assertEqual(CoinRedemptionRequest.objects.filter(idempotency_key=key).count(), 1)
         self.assertEqual({result[0].pk for result in results}, {CoinRedemptionRequest.objects.get(idempotency_key=key).pk})
         self.assertCountEqual([created for _, created in results], [True, False])
+
+    def test_simultaneous_requests_with_different_keys_cannot_reserve_balance_twice(self):
+        from wallet.services import create_coin_redemption_request
+
+        keys = (uuid4(), uuid4())
+
+        def create_with_key(key):
+            try:
+                _, created = create_coin_redemption_request(
+                    shopkeeper=User.objects.get(pk=self.owner.pk),
+                    shop=Shop.objects.get(pk=self.shop.pk),
+                    customer=CustomerProfile.objects.get(pk=self.customer.pk),
+                    idempotency_key=key,
+                )
+                return 'created' if created else 'duplicate'
+            except ValidationError:
+                return 'blocked'
+
+        results = self._parallel_calls(lambda: create_with_key(keys.pop()))
+        self.assertCountEqual(results, ['created', 'blocked'])
+        active = CoinRedemptionRequest.objects.filter(
+            customer=self.customer,
+            status__in=(CoinRedemptionRequest.Status.PENDING_CUSTOMER, CoinRedemptionRequest.Status.PENDING_SHOPKEEPER),
+            expires_at__gt=timezone.now(),
+        )
+        self.assertEqual(active.count(), 1)
+        self.assertEqual(InAppNotification.objects.filter(event_key__startswith='generic-redemption:').count(), 1)
 
     def test_simultaneous_finalization_deducts_wallet_only_once(self):
         from wallet.services import finalize_coin_redemption_request

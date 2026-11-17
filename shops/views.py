@@ -1,4 +1,5 @@
 from django.contrib import messages
+from datetime import timedelta
 from django.db import IntegrityError, transaction
 from django.db.models import Count, DecimalField, Q, Sum, Value
 from django.db.models.functions import Coalesce
@@ -11,14 +12,14 @@ from offers.models import ShopAd
 from .forms import ProductForm, ShopAdForm, ShopForm
 from .models import Product, Shop
 from accounts.services import create_customer_for_shopkeeper
-from .access import get_current_shopkeeper_shop, is_approved_shop
+from .access import get_current_shopkeeper_shop, is_approved_shop, shop_is_owned_by
 from django.utils import timezone
 from decimal import Decimal
 from transactions.models import Bill
 from uuid import uuid4
 from django.core.exceptions import ValidationError
 from wallet.models import CoinRedemption, CoinRedemptionRequest, CoinRule
-from wallet.services import create_coin_redemption_request, finalize_coin_redemption_request, get_customer_coin_summary
+from wallet.services import create_coin_redemption_request, finalize_coin_redemption_request, get_available_bill_redemption, get_customer_coin_summary
 from transactions.models import Credit, CreditPayment
 from transactions.credit_forms import CreditCreateForm, CreditPaymentForm
 from transactions.credit_services import create_credit, receive_credit_payment, reverse_bill_payment, reverse_credit_payment
@@ -326,14 +327,17 @@ def create_bill_for_customer(request, customer_id):
     active_tiers = set(CoinRule.objects.filter(shop=shop, is_active=True, purchase_amount__in=(Decimal('1000.00'), Decimal('5000.00'), Decimal('10000.00'))).values_list('purchase_amount', flat=True))
     has_active_coin_rule = active_tiers == {Decimal('1000.00'), Decimal('5000.00'), Decimal('10000.00')}
     has_previous_bill = Bill.objects.filter(shop=shop, customer=customer, status=Bill.Status.COMPLETED).exists()
-    coin_summary = get_customer_coin_summary(customer, shop) if has_previous_bill else None
-    can_request_redemption = bool(coin_summary and coin_summary['redeemable_coins'] > 0)
+    coin_summary = get_available_bill_redemption(customer=customer, shop=shop) if has_previous_bill else None
+    available_redemption_coins = coin_summary['redeemable_coins'] if coin_summary else 0
     can_apply_redemption = bool(has_previous_bill and CoinRedemption.objects.filter(
         shop=shop, customer=customer, status=CoinRedemption.Status.COMPLETED,
         applied_bill__isnull=True, source_bill__isnull=False,
         source_bill__status=Bill.Status.COMPLETED,
     ).exists())
-    form_redemption_options = {'allow_redemption_request': can_request_redemption, 'allow_redemption_apply': can_apply_redemption}
+    form_redemption_options = {
+        'available_redemption_coins': available_redemption_coins,
+        'allow_redemption_apply': can_apply_redemption,
+    }
 
     if request.method == 'POST':
         form = BillDetailsForm(request.POST, shop=shop, customer=customer, **form_redemption_options)
@@ -353,12 +357,8 @@ def create_bill_for_customer(request, customer_id):
                         discount=discount, items=[line.cleaned_data for line in active_forms],
                         payment_received=form.cleaned_data.get('payment_received'),
                         redemption_to_apply=form.cleaned_data.get('redemption_to_apply'),
+                        redemption_coins=form.cleaned_data.get('redemption_coins') or 0,
                     )
-                    if created and form.cleaned_data.get('request_coin_redemption'):
-                        create_coin_redemption_request(
-                            shopkeeper=request.user, shop=shop, customer=customer,
-                            idempotency_key=uuid4(), source_bill=bill,
-                        )
                 except IntegrityError:
                     bill = Bill.objects.filter(
                         idempotency_key=form.cleaned_data['idempotency_key'], shop=shop, customer=customer,
@@ -370,7 +370,10 @@ def create_bill_for_customer(request, customer_id):
                     for message in error.messages:
                         form.add_error(None, message)
                 else:
-                    messages.success(request, f'Bill {bill.bill_number} was generated successfully.')
+                    if bill.status == Bill.Status.PENDING_REDEMPTION:
+                        messages.info(request, f'Bill {bill.bill_number} is waiting for customer ShopCoin approval. No payment, Udhar or Purchase Coins were recorded yet.')
+                    else:
+                        messages.success(request, f'Bill {bill.bill_number} was generated successfully.')
                     return redirect('shops:bill_detail', bill_id=bill.pk)
                 if bill is not None:
                     messages.info(request, 'This bill was already submitted. No additional coins were added.')
@@ -384,7 +387,7 @@ def create_bill_for_customer(request, customer_id):
     return render(request, 'shopkeeper/bill_form.html', {
         'shop': shop, 'customer': customer, 'form': form, 'item_formset': item_formset,
         'has_active_coin_rule': has_active_coin_rule, 'has_previous_bill': has_previous_bill,
-        'coin_summary': coin_summary, 'can_request_redemption': can_request_redemption,
+        'coin_summary': coin_summary, 'available_redemption_coins': available_redemption_coins,
         'can_apply_redemption': can_apply_redemption,
     })
 
@@ -397,7 +400,65 @@ def bill_detail(request, bill_id):
     for credit in bill.credits.all():
         payment_history.extend({'payment': payment, 'is_credit_payment': True} for payment in credit.payments.all())
     payment_history.sort(key=lambda item: item['payment'].created_at)
-    return render(request, 'shopkeeper/bill_detail.html', {'bill': bill, 'audience': 'shopkeeper', 'payment_history': payment_history})
+    redemption_request = CoinRedemptionRequest.objects.filter(requested_bill=bill).first()
+    redemption_expired = bool(
+        redemption_request
+        and redemption_request.status in (CoinRedemptionRequest.Status.PENDING_CUSTOMER, CoinRedemptionRequest.Status.PENDING_SHOPKEEPER)
+        and redemption_request.expires_at <= timezone.now()
+    )
+    edit_deadline = bill.issued_at + timedelta(minutes=10)
+    can_edit_bill = bill.created_by_id == request.user.pk and timezone.now() < edit_deadline and bill.status == Bill.Status.COMPLETED
+    redemption_final_amount = bill.total_amount - redemption_request.reward_value if redemption_request and bill.status == Bill.Status.PENDING_REDEMPTION else None
+    return render(request, 'shopkeeper/bill_detail.html', {'bill': bill, 'audience': 'shopkeeper', 'payment_history': payment_history, 'can_edit_bill': can_edit_bill, 'edit_deadline': edit_deadline, 'redemption_request': redemption_request, 'redemption_expired': redemption_expired, 'redemption_final_amount': redemption_final_amount})
+
+
+@shopkeeper_required
+@require_http_methods(['GET', 'POST'])
+def bill_edit(request, bill_id):
+    from transactions.forms import BillEditForm, BillItemFormSet
+    from transactions.services_bill_edit import edit_bill
+
+    bill = get_object_or_404(
+        Bill.objects.select_related('shop', 'customer__user').prefetch_related('items'),
+        pk=bill_id, shop__owner=request.user,
+    )
+    if not shop_is_owned_by(request.user, bill.shop) or bill.created_by_id != request.user.pk:
+        from django.http import Http404
+        raise Http404
+    deadline = bill.issued_at + timedelta(minutes=10)
+    if timezone.now() >= deadline or bill.status != Bill.Status.COMPLETED:
+        messages.error(request, 'This bill can no longer be edited.')
+        return redirect('shops:bill_detail', bill_id=bill.pk)
+
+    initial_items = [
+        {'product': item.product_id, 'product_name': item.product_name, 'quantity': item.quantity, 'unit_price': item.unit_price}
+        for item in bill.items.all()
+    ]
+    if request.method == 'POST':
+        form = BillEditForm(request.POST)
+        item_formset = BillItemFormSet(request.POST, prefix='items', form_kwargs={'shop': bill.shop})
+        if form.is_valid() and item_formset.is_valid():
+            active_items = [item.cleaned_data for item in item_formset.forms if item.cleaned_data and not item.cleaned_data.get('DELETE')]
+            if not active_items:
+                item_formset.forms[0].add_error(None, 'At least one product is required.')
+            else:
+                try:
+                    edit_bill(
+                        bill_id=bill.pk, actor=request.user, shop=bill.shop,
+                        reason=form.cleaned_data['reason'], discount=form.cleaned_data.get('discount') or Decimal('0.00'),
+                        items=active_items,
+                    )
+                except ValidationError as error:
+                    form.add_error(None, '; '.join(error.messages))
+                else:
+                    messages.success(request, f'Bill {bill.bill_number} was updated.')
+                    return redirect('shops:bill_detail', bill_id=bill.pk)
+    else:
+        form = BillEditForm(initial={'discount': bill.merchant_discount})
+        item_formset = BillItemFormSet(prefix='items', initial=initial_items, form_kwargs={'shop': bill.shop})
+    return render(request, 'shopkeeper/bill_edit.html', {
+        'bill': bill, 'form': form, 'item_formset': item_formset, 'edit_deadline': deadline,
+    })
 
 
 @shopkeeper_required

@@ -10,6 +10,7 @@
   <link href="{% static 'css/customer.css' %}" rel="stylesheet">
   <link href="{% static 'css/responsive.css' %}" rel="stylesheet">
   <link href="{% static 'css/customer-pages.css' %}" rel="stylesheet">
+  <link href="{% static 'css/notifications.css' %}" rel="stylesheet">
   <script>try{document.documentElement.dataset.theme=localStorage.getItem('shopcoin-theme')||'light';document.documentElement.lang="{% if user.is_authenticated and user.profile.preferred_language %}{{ user.profile.preferred_language }}{% else %}{{ request.COOKIES.django_language|default:'en' }}{% endif %}"}catch(e){}</script>
   {% if request.resolver_match.url_name == 'home' %}<link href="{% static 'css/landing.css' %}" rel="stylesheet">{% endif %}
   <link href="{% static 'css/preferences.css' %}" rel="stylesheet">
