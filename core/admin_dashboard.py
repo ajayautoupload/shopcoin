@@ -118,7 +118,7 @@ def admin_dashboard(request):
         {'label': 'Purchase Coins Issued', 'value': f'{purchase_issued:,}', 'icon': 'fa-coins', 'tone': 'gold', 'url': _admin_list_url(CoinLedger)},
         {'label': 'Website Coins Issued', 'value': f'{website_issued:,}', 'icon': 'fa-globe', 'tone': 'blue', 'url': _admin_list_url(WebsiteEngagementStats)},
         {'label': 'Coins Redeemed', 'value': f'{CoinRedemption.objects.aggregate(value=Sum("coins_redeemed"))["value"] or 0:,}', 'icon': 'fa-arrow-rotate-left', 'tone': 'violet', 'url': _admin_list_url(CoinRedemption)},
-        {'label': 'Pending Redemption Requests', 'value': CoinRedemptionRequest.objects.filter(status__in=pending_statuses).count(), 'icon': 'fa-hourglass-half', 'tone': 'orange', 'url': _admin_list_url(CoinRedemptionRequest)},
+        {'label': 'Legacy Pending Redemption Records', 'value': CoinRedemptionRequest.objects.filter(status__in=pending_statuses).count(), 'icon': 'fa-hourglass-half', 'tone': 'orange', 'url': _admin_list_url(CoinRedemptionRequest)},
         {'label': 'Outstanding Udhar', 'value': f'₹{outstanding_credit:,.2f}', 'icon': 'fa-hand-holding-dollar', 'tone': 'red', 'url': _admin_list_url(Credit)},
     ]
 

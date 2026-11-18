@@ -177,7 +177,7 @@ class AdminDashboardTests(TestCase):
         self.assertEqual(values['Purchase Coins Issued'], '12')
         self.assertEqual(values['Website Coins Issued'], '3')
         self.assertEqual(values['Coins Redeemed'], '2')
-        self.assertEqual(values['Pending Redemption Requests'], 1)
+        self.assertEqual(values['Legacy Pending Redemption Records'], 1)
         self.assertEqual(values['Outstanding Udhar'], '₹450.00')
         self.assertEqual(response.context['chart_payload']['shops'][0]['label'], 'Real Shop')
         self.assertContains(response, '<td data-no-translate>Real Shop</td>', html=False)

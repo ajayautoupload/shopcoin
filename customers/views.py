@@ -16,7 +16,7 @@ from offers.models import ShopAd
 from shops.models import Product, Shop
 from accounts.services import deactivate_customer_account
 from wallet.models import CoinRedemption, CoinRedemptionRequest, CoinRule, WebsiteEngagement
-from wallet.services import begin_website_engagement, confirm_coin_redemption_request, get_customer_coin_summary, record_website_engagement_heartbeat
+from wallet.services import begin_website_engagement, get_customer_coin_summary, record_website_engagement_heartbeat
 from django.db.models import Count, Sum
 from django.db.models.functions import Coalesce
 from decimal import Decimal
@@ -103,19 +103,8 @@ def bill_detail(request, bill_id):
     for credit in bill.credits.all():
         payment_history.extend({'payment': payment, 'is_credit_payment': True} for payment in credit.payments.all())
     payment_history.sort(key=lambda item: item['payment'].created_at)
-    from wallet.models import CoinRedemptionRequest
-    redemption_request = CoinRedemptionRequest.objects.select_related('shop').filter(requested_bill=bill).first()
-    redemption_final_amount = bill.total_amount - redemption_request.reward_value if redemption_request and bill.status == Bill.Status.PENDING_REDEMPTION else None
-    redemption_expired = bool(
-        redemption_request
-        and redemption_request.status in (CoinRedemptionRequest.Status.PENDING_CUSTOMER, CoinRedemptionRequest.Status.PENDING_SHOPKEEPER)
-        and redemption_request.expires_at <= timezone.now()
-    )
     return render(request, 'customer/bill_detail.html', {
         'bill': bill, 'payment_history': payment_history,
-        'redemption_request': redemption_request,
-        'redemption_final_amount': redemption_final_amount,
-        'redemption_expired': redemption_expired,
     })
 
 
@@ -138,46 +127,15 @@ def wallet(request):
     redemptions = redemptions.select_related('source_bill', 'applied_bill')
     redemption_requests = CoinRedemptionRequest.objects.filter(customer=profile).select_related('shop', 'source_bill', 'redemption__applied_bill').order_by('-created_at')
     from notifications.models import InAppNotification
-    notifications = InAppNotification.objects.filter(user=request.user).order_by('-created_at')[:10]
+    notifications = InAppNotification.objects.filter(user=request.user).exclude(
+        event_key__startswith='bill-redemption:',
+    ).exclude(url__startswith='/customer/redemptions/').order_by('-created_at')[:10]
     return render(request, 'customer/wallet.html', {
         'profile': profile, 'shop': profile.connected_shop, 'wallet': wallet,
         'coin_summary': coin_summary, 'rules': rules, 'redemptions': redemptions,
         'entries': wallet.entries.all()[:10], 'redemption_requests': redemption_requests,
         'redemptions': redemptions, 'notifications': notifications,
     })
-
-
-@customer_required
-@require_POST
-def confirm_redemption(request, request_id):
-    profile = request.user.customer_profile
-    decision = request.POST.get('decision')
-    if decision not in ('confirm', 'reject'):
-        messages.error(request, 'Choose whether to approve or reject this redemption request.')
-        return redirect('customers:wallet')
-    redemption_request = None
-    try:
-        redemption_request = confirm_coin_redemption_request(
-            request_id=request_id, customer=profile,
-            confirm=decision == 'confirm',
-        )
-    except ValidationError as error:
-        for message in error.messages:
-            messages.error(request, message)
-    else:
-        if redemption_request.status == CoinRedemptionRequest.Status.EXPIRED:
-            messages.error(request, 'This redemption request has expired. No coins were deducted.')
-        else:
-            messages.success(request, 'Request confirmed. The shopkeeper must still confirm before any coins are deducted.' if redemption_request.status == CoinRedemptionRequest.Status.PENDING_SHOPKEEPER else 'Redemption request rejected.')
-    if redemption_request and request.POST.get('notification_id'):
-        from notifications.models import InAppNotification
-        InAppNotification.objects.filter(
-            pk=request.POST.get('notification_id'), user=request.user,
-            redemption_request=redemption_request, read_at__isnull=True,
-        ).update(read_at=timezone.now())
-    if redemption_request and redemption_request.requested_bill_id:
-        return redirect('customers:bill_detail', bill_id=redemption_request.requested_bill_id)
-    return redirect('customers:wallet')
 
 
 @customer_required
@@ -285,17 +243,9 @@ def notification_settings(request):
 @customer_required
 def notification_inbox(request):
     from notifications.models import InAppNotification
-    notifications = InAppNotification.objects.filter(user=request.user).select_related(
-        'redemption_request__requested_bill',
-    ).order_by('-created_at', '-pk')
-    now = timezone.now()
-    for notification in notifications:
-        redemption_request = notification.redemption_request
-        notification.can_respond = bool(
-            redemption_request
-            and redemption_request.status == CoinRedemptionRequest.Status.PENDING_CUSTOMER
-            and redemption_request.expires_at > now
-        )
+    notifications = InAppNotification.objects.filter(user=request.user).exclude(
+        event_key__startswith='bill-redemption:',
+    ).exclude(url__startswith='/customer/redemptions/').order_by('-created_at', '-pk')
     return render(request, 'customer/notifications.html', {'notifications': notifications})
 
 

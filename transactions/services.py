@@ -12,7 +12,11 @@ from shops.access import shop_is_owned_by
 from shops.models import Product
 from wallet.models import CoinLedger, CoinRedemption, CoinRedemptionRequest, Wallet
 from wallet.models import CoinRule
-from wallet.services import COINS_PER_HUNDRED, calculate_coins_for_purchase, create_bill_coin_redemption_request, get_coin_source_summary
+from wallet.services import (
+    COINS_PER_HUNDRED, _available_bill_redemption_summary,
+    calculate_coins_for_purchase, calculate_redemption_allocation,
+    get_coin_source_summary, redeem_customer_coins,
+)
 
 from .models import Bill, BillItem, BillPayment, Credit
 
@@ -105,6 +109,17 @@ def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, ite
     subtotal = subtotal.quantize(CENT)
     if not normalized_items:
         raise ValidationError('Add at least one product to the bill.')
+    redemption_allocation = None
+    if redemption_coins:
+        if applied_redemption:
+            raise ValidationError('Choose either an earlier confirmed redemption or ShopCoin redemption for this bill, not both.')
+        if not Bill.objects.filter(shop=shop, customer=customer, status=Bill.Status.COMPLETED).exists():
+            raise ValidationError('Coin redemption is available after the customer’s first completed bill.')
+        redemption_summary = _available_bill_redemption_summary(customer=customer, shop=shop)
+        redemption_allocation = calculate_redemption_allocation(redemption_summary, redemption_coins)
+        if redemption_allocation['reward_value'] <= 0:
+            raise ValidationError('The selected coins have no redeemable saved value.')
+        discount += redemption_allocation['reward_value']
     if applied_redemption:
         discount += applied_redemption.reward_value
     if applied_redemption and redemption_coins:
@@ -143,28 +158,6 @@ def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, ite
     get_coin_source_summary(wallet)
     wallet.refresh_from_db(fields=('balance',))
     balance_before = wallet.balance
-    rule, coins_earned = calculate_coins_for_purchase(shop, payment_received, balance_before)
-    balance_after = balance_before + coins_earned
-    value_per_coin = rule.coin_value_per_coin if rule else Decimal('0.00')
-    coin_value_amount = (Decimal(coins_earned) * value_per_coin).quantize(CENT) if value_per_coin is not None else Decimal('0.00')
-
-    if redemption_coins:
-        bill = Bill.objects.create(
-            bill_number=f'SC{shop.pk}-{timezone.localtime():%Y%m%d%H%M%S}-{key.hex[:12].upper()}',
-            idempotency_key=key, shop=shop, customer=customer, created_by=shopkeeper,
-            subtotal=subtotal, discount=discount, total_amount=total_amount,
-            paid_amount=Decimal('0.00'), payment_status=Bill.PaymentStatus.UNPAID,
-            coins_earned=0, coin_value_amount=Decimal('0.00'),
-            wallet_balance_before=balance_before, wallet_balance_after=balance_before,
-            status=Bill.Status.PENDING_REDEMPTION,
-        )
-        BillItem.objects.bulk_create([BillItem(bill=bill, **line) for line in normalized_items])
-        create_bill_coin_redemption_request(
-            shopkeeper=shopkeeper, shop=shop, customer=customer, bill=bill,
-            requested_coins=redemption_coins, payment_received=payment_received,
-        )
-        return bill, True
-
     now = timezone.localtime()
     bill_number = f'SC{shop.pk}-{now:%Y%m%d%H%M%S}-{key.hex[:12].upper()}'
     bill = Bill.objects.create(
@@ -173,17 +166,17 @@ def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, ite
         shop=shop,
         customer=customer,
         created_by=shopkeeper,
-        coin_rule=rule,
+        coin_rule=None,
         subtotal=subtotal,
         discount=discount,
         total_amount=total_amount,
-        paid_amount=payment_received,
-        payment_status=(Bill.PaymentStatus.PAID if outstanding == 0 else Bill.PaymentStatus.UNPAID if payment_received == 0 else Bill.PaymentStatus.PARTIAL),
-        coins_earned=coins_earned,
-        coin_value_per_coin=value_per_coin,
-        coin_value_amount=coin_value_amount,
+        paid_amount=Decimal('0.00'),
+        payment_status=Bill.PaymentStatus.UNPAID,
+        coins_earned=0,
+        coin_value_per_coin=None,
+        coin_value_amount=Decimal('0.00'),
         wallet_balance_before=balance_before,
-        wallet_balance_after=balance_after,
+        wallet_balance_after=balance_before,
         cumulative_shopping_after=cumulative_shopping_after,
     )
     BillItem.objects.bulk_create([BillItem(bill=bill, **line) for line in normalized_items])
@@ -191,6 +184,51 @@ def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, ite
         applied_redemption.applied_bill = bill
         applied_redemption.save(update_fields=('applied_bill',))
         CoinLedger.objects.filter(redemption=applied_redemption).update(bill=bill)
+
+    redemption = None
+    if redemption_allocation:
+        redemption, _ = redeem_customer_coins(
+            shopkeeper=shopkeeper, shop=shop, customer_id=customer.pk,
+            idempotency_key=key, confirmed=True,
+            requested_coins=redemption_coins,
+            expected_coins=redemption_coins,
+            expected_purchase_coins=redemption_allocation['purchase_coins'],
+            expected_website_coins=redemption_allocation['website_coins'],
+            expected_reward_value=redemption_allocation['reward_value'],
+            reward_description=f'Bill {bill.bill_number}',
+        )
+        redemption.source_bill = Bill.objects.filter(
+            shop=shop, customer=customer, status=Bill.Status.COMPLETED,
+        ).exclude(pk=bill.pk).order_by('-issued_at', '-pk').first()
+        redemption.applied_bill = bill
+        redemption.save(update_fields=('source_bill', 'applied_bill'))
+        CoinLedger.objects.filter(redemption=redemption).update(bill=bill)
+        from notifications.services import create_direct_bill_redemption_notification
+        create_direct_bill_redemption_notification(bill=bill, redemption=redemption)
+
+    # Redemption is deducted before calculating the new purchase reward. The
+    # purchase coin rule still sees only the amount actually paid.
+    wallet.refresh_from_db(fields=('balance',))
+    balance_before_earning = wallet.balance
+    rule, coins_earned = calculate_coins_for_purchase(shop, payment_received, balance_before_earning)
+    value_per_coin = rule.coin_value_per_coin if rule else Decimal('0.00')
+    coin_value_amount = (Decimal(coins_earned) * value_per_coin).quantize(CENT)
+    balance_after = balance_before_earning + coins_earned
+    bill.coins_earned = coins_earned
+    bill.coin_rule = rule
+    bill.coin_value_per_coin = value_per_coin
+    bill.coin_value_amount = coin_value_amount
+    bill.paid_amount = payment_received
+    bill.payment_status = (
+        Bill.PaymentStatus.PAID if outstanding == 0
+        else Bill.PaymentStatus.UNPAID if payment_received == 0
+        else Bill.PaymentStatus.PARTIAL
+    )
+    bill.wallet_balance_after = balance_after
+    bill.save(update_fields=(
+        'coins_earned', 'coin_rule', 'coin_value_per_coin', 'coin_value_amount',
+        'paid_amount', 'payment_status', 'wallet_balance_after',
+    ))
 
     payment = None
     if payment_received > 0:
@@ -210,7 +248,7 @@ def create_bill(*, shopkeeper, shop, customer_id, idempotency_key, discount, ite
             coin_value_per_coin=value_per_coin,
             transaction_reference=f'BILLPAY-{payment.payment_reference.hex[:32]}',
             coin_delta=coins_earned,
-            balance_before=balance_before,
+            balance_before=balance_before_earning,
             balance_after=balance_after,
             description=f'Bill {bill.bill_number} · {shop.name}',
         )
@@ -256,7 +294,7 @@ def set_bill_status(*, bill_id, status):
     if CoinRedemption.objects.filter(
         customer=bill.customer, shop=bill.shop,
         redeemed_at__gte=bill.issued_at, purchase_coins_redeemed__gt=0,
-    ).exists():
+    ).exclude(applied_bill=bill).exists():
         raise ValidationError('Purchase Coins have already been redeemed after this bill. Resolve that redemption before refunding the bill.')
 
     wallet, _ = Wallet.objects.select_for_update().get_or_create(customer=bill.customer)
@@ -268,6 +306,20 @@ def set_bill_status(*, bill_id, status):
     source_totals = get_coin_source_summary(wallet)
     if coins_to_reverse > source_totals[CoinLedger.Source.PURCHASE]['coins']:
         raise ValidationError('There are not enough active Purchase Coins to reverse this bill safely.')
+
+    # Restore coins used as this bill's own discount. Keep the redemption and
+    # ledger rows for audit, but mark the debit entries reversed so source
+    # balances reconcile without inventing new coin values.
+    bill_redemptions = CoinRedemption.objects.select_for_update().filter(
+        applied_bill=bill, status=CoinRedemption.Status.COMPLETED,
+    )
+    for redemption in bill_redemptions:
+        CoinLedger.objects.select_for_update().filter(
+            wallet=wallet, redemption=redemption,
+            entry_type=CoinLedger.EntryType.REDEEM, is_reversed=False,
+        ).update(is_reversed=True)
+        redemption.status = CoinRedemption.Status.REVERSED
+        redemption.save(update_fields=('status',))
     purchase_entries.update(is_reversed=True)
     get_coin_source_summary(wallet)
     wallet.refresh_from_db(fields=('balance',))

@@ -19,7 +19,7 @@ from transactions.models import Bill
 from uuid import uuid4
 from django.core.exceptions import ValidationError
 from wallet.models import CoinRedemption, CoinRedemptionRequest, CoinRule
-from wallet.services import create_coin_redemption_request, finalize_coin_redemption_request, get_available_bill_redemption, get_customer_coin_summary
+from wallet.services import get_available_bill_redemption, get_customer_coin_summary
 from transactions.models import Credit, CreditPayment
 from transactions.credit_forms import CreditCreateForm, CreditPaymentForm
 from transactions.credit_services import create_credit, receive_credit_payment, reverse_bill_payment, reverse_credit_payment
@@ -370,10 +370,7 @@ def create_bill_for_customer(request, customer_id):
                     for message in error.messages:
                         form.add_error(None, message)
                 else:
-                    if bill.status == Bill.Status.PENDING_REDEMPTION:
-                        messages.info(request, f'Bill {bill.bill_number} is waiting for customer ShopCoin approval. No payment, Udhar or Purchase Coins were recorded yet.')
-                    else:
-                        messages.success(request, f'Bill {bill.bill_number} was generated successfully.')
+                    messages.success(request, f'Bill {bill.bill_number} was generated successfully.')
                     return redirect('shops:bill_detail', bill_id=bill.pk)
                 if bill is not None:
                     messages.info(request, 'This bill was already submitted. No additional coins were added.')
@@ -484,39 +481,23 @@ def customer_detail(request, customer_id):
     redemption_requests = CoinRedemptionRequest.objects.filter(customer=customer, shop=shop).select_related('source_bill', 'redemption').order_by('-created_at')
     return render(request, 'shopkeeper/customer_detail.html', {
         'shop': shop, 'customer': customer, 'bills': bills, 'summary': summary, 'wallet': wallet,
-        'redemptions': redemptions, 'redemption_requests': redemption_requests, 'redemption_key': uuid4(),
+        'redemptions': redemptions, 'redemption_requests': redemption_requests,
     })
 
 
 @shopkeeper_required
 @require_POST
-def clear_customer_coins(request, customer_id):
-    shop = get_current_shopkeeper_shop(request.user)
-    if shop is None:
-        messages.error(request, 'Create your shop profile before redeeming customer coins.')
-        return redirect('shops:dashboard')
-    try:
-        customer = get_object_or_404(CustomerProfile, pk=customer_id, connected_shop=shop, is_deleted=False)
-        redemption_request, created = create_coin_redemption_request(
-            shopkeeper=request.user, shop=shop, customer=customer,
-            idempotency_key=request.POST.get('idempotency_key'),
-            reward_description=request.POST.get('reward_description', ''),
-        )
-    except ValidationError as error:
-        for message in error.messages:
-            messages.error(request, message)
-    else:
-        messages.success(request, 'Redemption request sent to the customer. No coins were deducted.')
-    return redirect('shops:customer_detail', customer_id=customer_id)
-
-
-@shopkeeper_required
-@require_POST
-def finalize_redemption(request, request_id):
+def resolve_legacy_bill_redemption(request, request_id):
     shop = get_current_shopkeeper_shop(request.user)
     redemption_request = get_object_or_404(CoinRedemptionRequest, pk=request_id, shop=shop)
+    if redemption_request.requested_bill_id is None:
+        from django.http import Http404
+        raise Http404
+    from transactions.redemption_services import finalize_bill_redemption
     try:
-        redemption = finalize_coin_redemption_request(request_id=request_id, shopkeeper=request.user, shop=shop)
+        bill, redemption = finalize_bill_redemption(
+            request_obj=redemption_request, shopkeeper=request.user, shop=shop,
+        )
     except ValidationError as error:
         for message in error.messages:
             messages.error(request, message)
@@ -524,8 +505,10 @@ def finalize_redemption(request, request_id):
         if redemption:
             messages.success(request, f'{redemption.coins_redeemed} coins redeemed for ₹{redemption.reward_value}.')
         else:
-            messages.error(request, 'This redemption request has expired. No coins were deducted.')
-    return redirect('shops:customer_detail', customer_id=redemption_request.customer_id)
+            messages.info(request, 'The legacy redemption request expired. The bill was finalized without coin discount.')
+        if bill:
+            return redirect('shops:bill_detail', bill_id=bill.pk)
+    return redirect('shops:bill_detail', bill_id=redemption_request.requested_bill_id)
 
 
 @shopkeeper_required

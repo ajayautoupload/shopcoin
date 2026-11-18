@@ -79,7 +79,7 @@
         <p class="form-text mb-2">Eligible confirmed balance: <strong>{{ coin_summary.redeemable_coins }} coins · ₹{{ coin_summary.redeemable_reward_value|floatformat:2 }}</strong> using saved coin values.</p>
         <p class="form-text mb-2">Purchase Coins: {{ coin_summary.purchase_coins }} · saved value ₹{{ coin_summary.purchase_reward_value|floatformat:2 }}{% if coin_summary.website_redeemable %}<br>Website Coins: {{ coin_summary.website_coins }} · saved value ₹{{ coin_summary.website_reward_value|floatformat:2 }}{% endif %}</p>
         {{ form.redemption_coins }}{% for error in form.redemption_coins.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
-        <div class="form-text">Enter the coin quantity to request from the customer. Coins are deducted only after customer approval and shopkeeper confirmation.</div>
+        <div class="form-text">Selected coins are redeemed when you submit this bill. Only eligible coins are allowed and their saved value is used.</div>
         <p class="mb-0 mt-2">Selected coin discount: <strong>₹<span id="selected-coin-discount">0.00</span></strong></p>
       </div>
       {% endif %}
@@ -157,11 +157,11 @@
     document.getElementById('merchant-discount').textContent = discountAmount.toFixed(2);
     document.getElementById('redemption-discount').textContent = redemptionValue.toFixed(2);
     document.getElementById('selected-coin-discount')?.replaceChildren(selectedRedemptionValue.toFixed(2));
-    document.getElementById('original-total').textContent = Math.max(0, subtotal - discountAmount).toFixed(2);
+    document.getElementById('original-total').textContent = subtotal.toFixed(2);
     document.getElementById('final-total').textContent = finalAmount.toFixed(2);
     document.getElementById('remaining-total').textContent = remaining.toFixed(2);
-    document.getElementById('payment-status').textContent = selectedCoins > 0 ? 'Pending customer approval' : remaining === 0 ? 'Paid' : received === 0 ? 'Unpaid' : 'Partially paid';
-    document.getElementById('coins-earned').textContent = selectedCoins > 0 ? '0 until approved' : received >= 1000 ? String(Math.floor(received / 100)) : '0';
+    document.getElementById('payment-status').textContent = remaining === 0 ? 'Paid' : received === 0 ? 'Unpaid' : 'Partially paid';
+    document.getElementById('coins-earned').textContent = received >= 1000 ? String(Math.floor(received / 100)) : '0';
   }
 
   document.getElementById('add-line').addEventListener('click', () => {

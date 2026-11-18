@@ -115,6 +115,11 @@ def finalize_bill_without_redemption(*, request_id):
 
 @transaction.atomic
 def finalize_bill_redemption(*, request_obj, shopkeeper, shop):
+    """Resolve a pre-upgrade pending bill request without customer approval.
+
+    New bills redeem at submission in ``create_bill``. This route is kept only
+    so a shopkeeper can safely settle a historical pending bill after upgrade.
+    """
     request_obj = CoinRedemptionRequest.objects.select_for_update().select_related(
         'customer', 'requested_bill', 'source_bill',
     ).get(pk=request_obj.pk)
@@ -124,8 +129,11 @@ def finalize_bill_redemption(*, request_obj, shopkeeper, shop):
         raise ValidationError('This redemption does not belong to the selected shop.')
     if request_obj.requested_bill.created_by_id != shopkeeper.pk:
         raise ValidationError('Only the shopkeeper who generated this bill may finalize its redemption.')
-    if request_obj.status != CoinRedemptionRequest.Status.PENDING_SHOPKEEPER:
-        raise ValidationError('The customer must approve this redemption before shopkeeper confirmation.')
+    if request_obj.status not in (
+        CoinRedemptionRequest.Status.PENDING_CUSTOMER,
+        CoinRedemptionRequest.Status.PENDING_SHOPKEEPER,
+    ):
+        raise ValidationError('This legacy bill redemption request is no longer pending.')
     if request_obj.expires_at <= timezone.now():
         request_obj.status = CoinRedemptionRequest.Status.EXPIRED
         request_obj.save(update_fields=('status',))
@@ -162,10 +170,9 @@ def finalize_bill_redemption(*, request_obj, shopkeeper, shop):
     )
     redemption.source_bill = request_obj.source_bill
     redemption.applied_bill = bill
-    redemption.customer_confirmed_at = request_obj.customer_confirmed_at
     redemption.shopkeeper_confirmed_at = timezone.now()
     redemption.save(update_fields=(
-        'source_bill', 'applied_bill', 'customer_confirmed_at', 'shopkeeper_confirmed_at',
+        'source_bill', 'applied_bill', 'shopkeeper_confirmed_at',
     ))
     CoinLedger.objects.filter(redemption=redemption).update(bill=bill)
     request_obj.redemption = redemption

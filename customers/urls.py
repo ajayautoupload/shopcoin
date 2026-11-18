@@ -10,7 +10,6 @@ urlpatterns = [
     path('customer/engagement/start/', views.website_engagement_start, name='engagement_start'),
     path('customer/engagement/heartbeat/', views.website_engagement_heartbeat, name='engagement_heartbeat'),
     path('customer/wallet/', views.wallet, name='wallet'),
-    path('customer/redemptions/<int:request_id>/confirm/', views.confirm_redemption, name='confirm_redemption'),
     path('customer/credit/', views.my_credit, name='credit'),
     path('customer/history/', views.shopping_history, name='history'),
     path('customer/history/<int:bill_id>/', views.bill_detail, name='bill_detail'),

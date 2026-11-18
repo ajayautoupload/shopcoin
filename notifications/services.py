@@ -6,45 +6,42 @@ from django.utils import timezone
 from .models import InAppNotification
 
 
-def create_generic_redemption_notification(*, redemption_request, event):
-    """Create a localized, deduplicated notice for a future-bill redemption."""
-    customer = redemption_request.customer
+def create_direct_bill_redemption_notification(*, bill, redemption):
+    """Tell the bill's customer about a completed shopkeeper-authorized redemption."""
+    customer = bill.customer
     if not customer.notifications_enabled:
         return None
-
     profile = getattr(customer.user, 'profile', None)
     language = profile.preferred_language if profile and profile.preferred_language == 'hi' else 'en'
-    shop_name = redemption_request.shop.name
-    reference = redemption_request.reference_id
-    if event == 'requested':
-        title_en, title_hi = 'Coin redemption approval needed', 'कॉइन रिडेम्पशन की पुष्टि आवश्यक'
-        message_en = (
-            f'{shop_name} requests redemption of {redemption_request.coins_requested} coins '
-            f'(₹{redemption_request.reward_value:.2f}). Only confirm if you personally authorized this. '
-            f'Reference: {reference}.'
-        )
-        message_hi = (
-            f'{shop_name} {redemption_request.coins_requested} कॉइन (₹{redemption_request.reward_value:.2f}) '
-            f'रिडीम करने का अनुरोध करता है। केवल तभी पुष्टि करें जब आपने स्वयं इसकी अनुमति दी हो। '
-            f'संदर्भ: {reference}।'
-        )
-    elif event == 'completed':
-        title_en, title_hi = 'Coins redeemed', 'कॉइन रिडीम हुए'
-        message_en = f'Redemption {reference} is complete. {redemption_request.coins_requested} coins were redeemed for ₹{redemption_request.reward_value:.2f}.'
-        message_hi = f'रिडेम्पशन {reference} पूरा हुआ। {redemption_request.coins_requested} कॉइन ₹{redemption_request.reward_value:.2f} के लिए रिडीम किए गए।'
+    if language == 'hi':
+        title = 'बिल पर ShopCoin रिडेम्पशन लागू हुआ'
+        message = '\n'.join((
+            f'दुकान: {bill.shop.name}', f'बिल नंबर: {bill.bill_number}',
+            f'रिडीम किए गए कॉइन: {redemption.coins_redeemed}',
+            f'कॉइन का सुरक्षित मूल्य: ₹{redemption.reward_value:.2f}',
+            f'कॉइन छूट: ₹{redemption.reward_value:.2f}',
+            f'अंतिम देय राशि: ₹{bill.total_amount:.2f}',
+            f'रिडेम्पशन संदर्भ: {redemption.idempotency_key}',
+            'रिडेम्पशन पूरा हुआ; आपकी वॉलेट और लेजर जानकारी अपडेट कर दी गई है।',
+        ))
     else:
-        raise ValueError(f'Unsupported generic redemption notification event: {event}')
-
+        title = 'ShopCoin redemption applied to your bill'
+        message = '\n'.join((
+            f'Shop: {bill.shop.name}', f'Bill number: {bill.bill_number}',
+            f'Coins redeemed: {redemption.coins_redeemed}',
+            f'Saved coin value: ₹{redemption.reward_value:.2f}',
+            f'Coin discount: ₹{redemption.reward_value:.2f}',
+            f'Final payable: ₹{bill.total_amount:.2f}',
+            f'Redemption reference: {redemption.idempotency_key}',
+            'Redemption is complete; your wallet and ledger have been updated.',
+        ))
     return InAppNotification.objects.get_or_create(
-        event_key=f'generic-redemption:{redemption_request.pk}:{event}',
+        event_key=f'bill-redemption-direct:{redemption.pk}',
         defaults={
             'user_id': customer.user_id,
-            'redemption_request': redemption_request,
-            'title': title_hi if language == 'hi' else title_en,
-            'message': message_hi if language == 'hi' else message_en,
-            # A generic request is for a future bill; the POST-only approval
-            # endpoint must not be used as a notification's GET destination.
-            'url': reverse('customers:wallet'),
+            'title': title,
+            'message': message,
+            'url': reverse('customers:bill_detail', args=(bill.pk,)),
         },
     )[0]
 

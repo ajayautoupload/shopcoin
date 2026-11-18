@@ -93,6 +93,7 @@ class CoinRule(models.Model):
 class CoinRedemption(models.Model):
     class Status(models.TextChoices):
         COMPLETED = 'COMPLETED', 'Completed'
+        REVERSED = 'REVERSED', 'Reversed'
 
     customer = models.ForeignKey(CustomerProfile, on_delete=models.CASCADE, related_name='coin_redemptions')
     shop = models.ForeignKey('shops.Shop', on_delete=models.CASCADE, related_name='coin_redemptions')
