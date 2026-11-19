@@ -1,3 +1,4 @@
+
 """
 Django settings for config project.
 
@@ -19,8 +20,8 @@ from core.media_storage import resolve_media_storage
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Load private local settings without adding a runtime dependency. Existing
-# process/hosting environment variables always take precedence over .env.
+# Load private local settings without adding a runtime dependency.
+# Existing process/hosting environment variables always take precedence over .env.
 local_env_file = BASE_DIR / '.env'
 if local_env_file.is_file():
     for env_line in local_env_file.read_text(encoding='utf-8').splitlines():
@@ -39,8 +40,8 @@ if local_env_file.is_file():
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 
-# Local development remains usable without environment configuration. Production
-# must provide a private key and must never inherit the local development key.
+# Local development remains usable without environment configuration.
+# Production must provide a private key and must never inherit the local development key.
 DEBUG = os.environ.get('DJANGO_DEBUG', 'true').strip().lower() == 'true'
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY')
 if not SECRET_KEY:
@@ -48,22 +49,48 @@ if not SECRET_KEY:
         raise RuntimeError('DJANGO_SECRET_KEY must be set when DJANGO_DEBUG is false.')
     SECRET_KEY = 'django-insecure-local-shop-coin-key-change-before-production'
 
+
+# Allowed hosts
 ALLOWED_HOSTS = [
-    host.strip() for host in os.environ.get(
-        'DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1',
-    ).split(',') if host.strip()
+    host.strip()
+    for host in os.environ.get(
+        'DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1'
+    ).split(',')
+    if host.strip()
 ]
+
+# Render hostname
 render_hostname = os.environ.get('RENDER_EXTERNAL_HOSTNAME', '').strip()
 if render_hostname and render_hostname not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(render_hostname)
 
+# ShopCoin custom domains
+for host in ['shopcoin.in', 'www.shopcoin.in']:
+    if host not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(host)
+
+
+# CSRF trusted origins
 CSRF_TRUSTED_ORIGINS = [
-    origin.strip() for origin in os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS', '').split(',')
+    origin.strip()
+    for origin in os.environ.get(
+        'DJANGO_CSRF_TRUSTED_ORIGINS', ''
+    ).split(',')
     if origin.strip()
 ]
+
+# Render URL
 render_url = os.environ.get('RENDER_EXTERNAL_URL', '').strip()
 if render_url and render_url not in CSRF_TRUSTED_ORIGINS:
     CSRF_TRUSTED_ORIGINS.append(render_url)
+
+# ShopCoin custom domain HTTPS origins
+for origin in [
+    'https://shopcoin.in',
+    'https://www.shopcoin.in',
+]:
+    if origin not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append(origin)
 
 
 # Application definition
@@ -94,24 +121,31 @@ MEDIA_STORAGE_ENABLED = MEDIA_STORAGE['enabled']
 MEDIA_STORAGE_PARTIALLY_CONFIGURED = MEDIA_STORAGE['partial']
 MEDIA_STORAGE_TEMPORARY_FALLBACK = MEDIA_STORAGE['temporary_fallback']
 AWS_QUERYSTRING_AUTH = MEDIA_STORAGE['querystring_auth']
+
 if MEDIA_STORAGE_TEMPORARY_FALLBACK:
     logging.getLogger('django').warning(
         'Permanent media storage is not configured. Using TEMPORARY local filesystem media; '
         'uploads can disappear when the Render instance restarts or redeploys.'
     )
+
 if MEDIA_STORAGE_PARTIALLY_CONFIGURED:
     logging.getLogger('django').warning(
         'R2 media storage is only partially configured; using local filesystem media. '
         'Missing settings: %s', ', '.join(MEDIA_STORAGE['missing']),
     )
+
 if MEDIA_STORAGE_ENABLED and not DEBUG and AWS_QUERYSTRING_AUTH:
-    raise RuntimeError('Production media must use stable public URLs; set AWS_QUERYSTRING_AUTH=false.')
+    raise RuntimeError(
+        'Production media must use stable public URLs; set AWS_QUERYSTRING_AUTH=false.'
+    )
+
 if MEDIA_STORAGE_ENABLED:
     INSTALLED_APPS.append('storages')
 
 AWS_S3_REGION_NAME = MEDIA_STORAGE['region_name']
 AWS_S3_ENDPOINT_URL = MEDIA_STORAGE['endpoint_url']
 AWS_S3_CUSTOM_DOMAIN = MEDIA_STORAGE['custom_domain']
+
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -151,16 +185,21 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
 
 database_url = os.environ.get('DATABASE_URL', '').strip()
+
 if database_url:
     parsed_database_url = urlparse(database_url)
+
     if parsed_database_url.scheme not in ('postgres', 'postgresql'):
         raise RuntimeError('DATABASE_URL must be a PostgreSQL connection URL.')
+
     database_options = {
         key: values[-1]
         for key, values in parse_qs(parsed_database_url.query).items()
     }
+
     if not DEBUG:
         database_options.setdefault('sslmode', 'require')
+
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
@@ -172,9 +211,12 @@ if database_url:
             'OPTIONS': database_options,
             'CONN_MAX_AGE': int(os.environ.get('DB_CONN_MAX_AGE', '600')),
             'CONN_HEALTH_CHECKS': True,
-            'DISABLE_SERVER_SIDE_CURSORS': '-pooler.' in (parsed_database_url.hostname or ''),
+            'DISABLE_SERVER_SIDE_CURSORS': '-pooler.' in (
+                parsed_database_url.hostname or ''
+            ),
         }
     }
+
 else:
     # Preserve the existing local SQLite setup until a DATABASE_URL is set.
     DATABASES = {
@@ -229,9 +271,11 @@ USE_TZ = True
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_DIRS = [BASE_DIR / 'static']
+
 MEDIA_URL = os.environ.get('DJANGO_MEDIA_URL', '/media/').strip()
 if not MEDIA_URL.endswith('/'):
     MEDIA_URL += '/'
+
 MEDIA_ROOT = Path(os.environ.get('DJANGO_MEDIA_ROOT', BASE_DIR / 'media'))
 
 STORAGES = {
@@ -263,6 +307,7 @@ STORAGES = {
     },
 }
 
+
 if not DEBUG:
     # Render terminates HTTPS before forwarding requests to the WSGI server.
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
@@ -270,6 +315,8 @@ if not DEBUG:
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_HSTS_SECONDS = int(os.environ.get('DJANGO_SECURE_HSTS_SECONDS', '3600'))
+
+
 LOGIN_URL = 'accounts:login'
 LOGIN_REDIRECT_URL = 'accounts:role_redirect'
 LOGOUT_REDIRECT_URL = 'core:home'
